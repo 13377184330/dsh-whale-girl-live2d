@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     var ballAt = NSPoint.zero
     var ballMoved: CGFloat = 0
     var hiddenWatch: Timer?
+    var shootWatch: Timer?
     var cursorFeed: Timer?
     var lastCursor: NSPoint?
     var health2: Timer?
@@ -150,6 +151,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         RunLoop.current.add(probe!, forMode: .common)
         // 页面里点「隐藏」→ 自动换成悬浮小球；这是她和壳子的约定
         launchedAt = Date()
+        // 截图触发器：`touch ~/.dsh/whalegirlpet-shoot` → 立刻存一张她的快照并删掉触发器。
+        // 用途：无头浏览器没有 WebGL、screencapture 又没屏幕录制权限，
+        // 这是唯一能「证明她真的画出来了」的自查手段。
+        shootWatch = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let flag = NSHomeDirectory() + "/.dsh/whalegirlpet-shoot"
+            guard FileManager.default.fileExists(atPath: flag) else { return }
+            try? FileManager.default.removeItem(atPath: flag)
+            self.saveShot()
+            self.log("按触发器保存了快照 → ~/.dsh/whalegirlpet-shot.png")
+        }
         hiddenWatch = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.checkHidden()
         }

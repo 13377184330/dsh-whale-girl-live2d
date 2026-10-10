@@ -133,10 +133,26 @@ async function poll() {
 // ——————————————————————————————————————————————————————————————
 // 主窗口
 // ——————————————————————————————————————————————————————————————
+
+/** 可选的「铺满主屏」：来自 PR #7（@c1overzz）。默认关闭 —— 读不到/解析失败/不是 true 一律 false。
+ *  打开方式：在 userData 目录（Windows 通常是 %APPDATA%\DS-WhaleGirl-Pet）的
+ *  settings.json 里写 {"fullscreenPrimary": true}。开启后窗口覆盖主屏工作区，
+ *  空白处照旧点击穿透（setIgnoreMouseEvents 逻辑不变），于是「她在哪」不再受窗口边界约束。 */
+function readFullscreenPrimary() {
+  try {
+    const p = path.join(app.getPath('userData'), 'settings.json')
+    return JSON.parse(fs.readFileSync(p, 'utf8')).fullscreenPrimary === true
+  } catch (e) {
+    return false
+  }
+}
+
 function createMain() {
+  const FULLSCREEN_PRIMARY = readFullscreenPrimary()
+  const waFs = screen.getPrimaryDisplay().workArea
   win = new BrowserWindow({
-    width: WIN_W,
-    height: WIN_H,
+    width: FULLSCREEN_PRIMARY ? waFs.width : WIN_W,
+    height: FULLSCREEN_PRIMARY ? waFs.height : WIN_H,
     frame: false,
     transparent: true,
     resizable: false,
@@ -155,8 +171,14 @@ function createMain() {
   win.setMenuBarVisibility(false)
 
   const wa = screen.getPrimaryDisplay().workArea
-  const saved = readPos()
-  win.setPosition(saved ? saved[0] : wa.x + wa.width - WIN_W - 8, saved ? saved[1] : wa.y + wa.height - WIN_H - 8)
+  if (FULLSCREEN_PRIMARY) {
+    // 铺满主屏时不恢复历史位置：位置就是这个整块工作区
+    win.setPosition(waFs.x, waFs.y)
+    bootLog('已启用「铺满主屏」（settings.json: fullscreenPrimary=true）')
+  } else {
+    const saved = readPos()
+    win.setPosition(saved ? saved[0] : wa.x + wa.width - WIN_W - 8, saved ? saved[1] : wa.y + wa.height - WIN_H - 8)
+  }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
