@@ -12,7 +12,7 @@
 // 另外按主人要求做了「联动」：第一次打开时如果检测不到插件，会直接给一个
 // 「一键安装插件」按钮，替你跑 dsh plugin --profile web add github:...，
 // 所以 Windows 用户不需要自己开命令行。
-const { app, BrowserWindow, Tray, Menu, screen, shell, session, ipcMain, nativeImage } = require('electron')
+const { app, BrowserWindow, Tray, Menu, screen, shell, session, ipcMain, nativeImage, dialog } = require('electron')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -268,6 +268,8 @@ function createMain() {
   }, 16)
   pollTimer = setInterval(poll, 90)
   win.once('ready-to-show', () => {
+    bootLog('ready-to-show：窗口即将显示')
+    bootLog('ready-to-show')
     win.showInactive()
     win.setAlwaysOnTop(true, 'screen-saver')
   })
@@ -589,11 +591,57 @@ function resetPos() {
 }
 
 // ——————————————————————————————————————————————————————————————
+
+// ————————————————————————————————————————————————————————————————
+// 启动诊断（Issue #6 / #8 的血泪）：两位 Windows 用户都遇到「双击后无声无息」——
+// 没有窗口、没有日志、没有 userData，连退出码都看不出来，完全没法定位。
+// 所以这里做三件事：① 任何阶段都往文件写日志 ② 兜住未捕获异常/未处理 Promise
+// ③ 启动失败时弹一个看得见的对话框，把日志路径告诉用户。
+// ————————————————————————————————————————————————————————————————
+const LOG_DIR = path.join(process.env.APPDATA || os.homedir(), 'ds-whale-girl-pet')
+const LOG_FILE = path.join(LOG_DIR, 'boot.log')
+function bootLog(msg) {
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true })
+    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${msg}\n`)
+  } catch (e) {}
+  try {
+    console.log('[dsh-pet]', msg)
+  } catch (e) {}
+}
+bootLog(
+  `=== 启动 v${require('./package.json').version} | electron ${process.versions.electron} | ` +
+    `node ${process.versions.node} | exe=${process.execPath} | dir=${__dirname} | ` +
+    `token=${fs.existsSync(TOKEN_FILE) ? '有' : '无'} ===`,
+)
+process.on('uncaughtException', (err) => {
+  bootLog('未捕获异常: ' + (err && err.stack ? err.stack : String(err)))
+})
+process.on('unhandledRejection', (err) => {
+  bootLog('未处理的 Promise 拒绝: ' + (err && err.stack ? err.stack : String(err)))
+})
+
 app.whenReady().then(() => {
-  app.setAppUserModelId('com.andersen216.dsh.whalegirlpet')
-  createMain()
-  createTray()
-  ipcMain.on('reload', load)
+  try {
+    bootLog('app ready')
+    app.setAppUserModelId('com.andersen216.dsh.whalegirlpet')
+    createMain()
+    bootLog('主窗口已创建')
+    createTray()
+    bootLog('托盘已创建')
+    ipcMain.on('reload', load)
+  } catch (err) {
+    bootLog('启动失败: ' + (err && err.stack ? err.stack : String(err)))
+    try {
+      dialog.showErrorBox(
+        'DS 鲸鱼娘桌宠 · 启动失败',
+        '启动时出错了。日志文件在：\n' + LOG_FILE + '\n\n' +
+          (err && err.message ? err.message : String(err)) +
+          '\n\n把日志发到 GitHub issue 即可定位。',
+      )
+    } catch (e) {}
+    app.exit(1)
+  }
 })
 app.on('window-all-closed', () => app.quit())
 app.on('before-quit', () => {
