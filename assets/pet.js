@@ -850,29 +850,6 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
   }
   let mood = 'neutral'
 
-  /** applyRig 每帧复用的临时容器（PR #3） */
-  const rigTargets = new Map()
-  const rigDelta = new Map()
-  const rigClaimed = new Set()
-
-  /**
-   * `ui.stage` 的矩形缓存（PR #3 @3Asterism）。
-   * gazeTick 40ms 一次、待机也一直在跑，而待机时她还坐着不动 ——
-   * 没必要每 40ms 就强制触发一次布局读取。只在真会变的地方标脏。
-   */
-  let stageRect = null
-  let stageRectDirty = true
-  function markStageRectDirty() {
-    stageRectDirty = true
-  }
-  function getStageRect() {
-    if (stageRectDirty || !stageRect) {
-      stageRect = ui.stage.getBoundingClientRect()
-      stageRectDirty = false
-    }
-    return stageRect
-  }
-
   /** 情绪名 → 表达式名（不在 EXPR 里的会被过滤掉） */
   function moodFace(name) {
     if (name == null) return null
@@ -1065,10 +1042,7 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     const dt = Math.min(64, now - (applyRig._last || now)) / 1000
     applyRig._last = now
 
-    // —— 以下三个容器来自 PR #3（@3Asterism）：applyRig 每帧都要用，
-    // 原来每帧 new 一次、当帧就丢，纯 GC 压力；空闲时它们基本是空的，clear() 更便宜。
-    const targets = rigTargets
-    targets.clear()
+    const targets = new Map()
     if (rig.face) targets.set(rig.face, 1)
     for (const name of rig.props) targets.set(name, 1)
 
@@ -1091,10 +1065,8 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     // （比如墨镜会写 ParamEyeLOpen），叠上去就会打架。
     // 所以这里做一个裁决：每个参数在同一时刻只允许**一个**表达式写，
     // 优先级 脸 > 道具（按加入顺序）。
-    const delta = rigDelta
-    const claimed = rigClaimed
-    delta.clear()
-    claimed.clear()
+    const delta = new Map()
+    const claimed = new Set()
     let skipped = 0
     const add = (id, v) => delta.set(id, (delta.get(id) || 0) + v)
     const winners = []
@@ -1767,7 +1739,6 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       ui.root.style.setProperty('--dshp-ps', clamp(h / UI_BASE_HEIGHT, 0.85, 1.15).toFixed(3))
     }
     mask.dirty = true
-    markStageRectDirty()      // 尺寸变了，缓存的视口矩形作废（PR #3）
     lastView = {
       w,
       h,
@@ -1851,7 +1822,6 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     el.style.transition = 'left .22s cubic-bezier(.2,.9,.3,1), top .22s cubic-bezier(.2,.9,.3,1)'
     el.style.left = left + 'px'
     el.style.top = top + 'px'
-    markStageRectDirty()
     el.style.right = 'auto'
     el.style.bottom = 'auto'
     setTimeout(() => {
@@ -2184,7 +2154,7 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     // 不再盯着最后那个方向，而是回正脸（主人要求：找不到光标就朝前看）
     const pointerFresh = gaze.pointer.seen && now - (gaze.pointer.at || 0) < 2000
     if (!detached && CFG.lookAtCursor && pointerFresh) {
-      const r = getStageRect()
+      const r = ui.stage.getBoundingClientRect()
       if (r.width) {
         const dx = gaze.pointer.x - (r.left + r.width / 2)
         const dy = gaze.pointer.y - (r.top + r.height / 2)
@@ -2650,7 +2620,6 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     )
 
     window.addEventListener('resize', () => {
-    markStageRectDirty()      // 视口变了，缓存肯定不准（PR #3）
       fitModel()
       const layout = readLayout()
       // 贴着左/右墙的：重新贴住那一侧（竖直位置不变，只夹进可见范围）
@@ -3403,15 +3372,6 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
   }
 
   function setHidden(hidden) {
-    // 隐藏是主人主动点的「现在不用显示她」——停渲染零风险（反正看不见）。
-    // PR #3 @3Asterism：桌面壳关掉了 backgroundThrottling，document.hidden 基本不会变 true，
-    // 所以这个显式开关才是真正能捕捉「用户不需要画面」的时机。
-    try {
-      if (app) {
-        if (hidden) app.ticker.stop()
-        else if (!document.hidden) app.ticker.start()
-      }
-    } catch (err) {}
     ui.root.classList.toggle('dshp-hidden', !!hidden)
     document.body.classList.toggle('dshp-pet-hidden', !!hidden)
     if (hidden) ui.bubble.hide()
