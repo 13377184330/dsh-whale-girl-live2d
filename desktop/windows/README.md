@@ -14,6 +14,16 @@
 > [Issue #6](https://github.com/Andersen216/dsh-whale-girl-live2d/issues/6)）。
 > 换到纯英文无空格路径即可正常使用（已由报告者实测确认）。
 
+
+### 启动不了？先双击 `run-with-fallback.cmd`
+
+如果双击 `DS-WhaleGirl-Pet.exe` **没有任何反应**（没窗口、没托盘、没日志），
+在同一个文件夹里双击 **`run-with-fallback.cmd`** —— 它会依次用
+「常规 → 禁用 GPU → 禁用 GPU+沙箱 → 软件渲染」四种方式重试，
+把每次的退出码写进 `%APPDATA%\ds-whale-girl-pet\launcher.log`，
+并告诉你哪种能跑起来。**把那个结果发到 issue**，我们就能定位
+（已知案例见 [Issue #6](https://github.com/Andersen216/dsh-whale-girl-live2d/issues/6)）。
+
 ## 怎么装（三步，不用开命令行）
 
 **① 先装插件**（在 DSH 里，任选一种）

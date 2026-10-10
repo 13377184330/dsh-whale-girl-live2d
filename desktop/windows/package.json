@@ -43,6 +43,9 @@
       "createStartMenuShortcut": true,
       "shortcutName": "DS 鲸鱼娘桌宠"
     },
-    "artifactName": "DS-WhaleGirl-Pet-Windows-Setup.${ext}"
+    "artifactName": "DS-WhaleGirl-Pet-Windows-Setup.${ext}",
+    "extraFiles": [
+      "run-with-fallback.cmd"
+    ]
   }
 }
