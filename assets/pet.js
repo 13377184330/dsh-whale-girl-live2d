@@ -4314,6 +4314,15 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     if (m.motion) playMotion(m.motion)
     const text = m.say || m.bubble
     if (text) ui.bubble.show(String(text), { name: 'DS 鲸鱼娘', ttl: m.bubbleMs || 5000 })
+    // 工作简报（/dsh-pet/control 的 report 字段）：头顶挂信封，点开是大号面板
+    if (m.report) {
+      try {
+        const r = m.report
+        if (Array.isArray(r)) pushReport(String(r[0] || '工作简报'), String(r[1] || ''))
+        else if (typeof r === 'string') pushReport('工作简报', r)
+        else pushReport(String(r.title || '工作简报'), String(r.body || r.text || ''))
+      } catch (err) {}
+    }
     if (m.attention) {
       ui.root.classList.add('dshp-open')
       setTimeout(() => closePanels(), 3000)
