@@ -508,6 +508,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     /// 候选宿主列表：**不靠端口号判断类型**（3080/19387 只是本机端口，别人可能完全不同）。
     /// 这里只负责「有哪些可能」，是网页版还是桌面版由 probeHost() 读宿主自己发出的
     /// 启动配置标记（desktop:true/false）来判定。
+    /// 端口 → 属主进程名（lsof 的第一列）。用来判断这个宿主是官方桌面版还是 dsh web ——
+    /// **通用判据，不看端口号**：桌面版宿主跑在 "DeepSeek Harness" 里，网页版是 node/dsh。
+    var portOwners: [Int: String] = [:]
+
     func candidateBases() -> [String] {
         var ports: [Int] = []
         // ① 插件写下的真实端口（谁先开就写谁，所以「打开哪个都能连」）
@@ -528,6 +532,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 if let r = l.range(of: #":(\d{2,5})\s*$"#, options: .regularExpression),
                    let port = Int(l[r].dropFirst().trimmingCharacters(in: .whitespaces)), port > 1023, port < 65536 {
                     ports.append(port)
+                    let owner = l.split(separator: " ").first.map(String.init) ?? ""
+                    if !owner.isEmpty { portOwners[port] = owner }
                 }
             }
         }
@@ -545,24 +551,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     ///   宿主跑在 Electron 里（官方桌面版）→ `"desktop":true`
     ///   宿主是普通 Node（`dsh web`）      → `"desktop":false`
     /// 所以只要读一下它发出来的 pet.js 就知道它是哪一种。
-    func probeHost(_ base: String, token: String) -> (code: Int, desktop: Bool?) {
-        guard let u = URL(string: base + "/dsh-pet/pet.js") else { return (-1, nil) }
+    func probeHost(_ base: String, token: String) -> (code: Int, desktop: Bool?, version: String) {
+        guard let u = URL(string: base + "/dsh-pet/pet.js") else { return (-1, nil, "") }
         var req = URLRequest(url: u)
         req.timeoutInterval = 1.8
         req.setValue("dsh_pet_desk=\(token)", forHTTPHeaderField: "Cookie")
         let sem = DispatchSemaphore(value: 0)
         var code = -1
         var kind: Bool?
+        var version = ""
         URLSession.shared.dataTask(with: req) { data, resp, _ in
             if let h = resp as? HTTPURLResponse { code = h.statusCode }
             if let d = data, let text = String(data: d, encoding: .utf8) {
                 if text.contains("\"desktop\":true") { kind = true }
                 else if text.contains("\"desktop\":false") { kind = false }
+                // 头部注释形如 /* dsh-live2d-pet 0.4.6 */ —— 用它判断这个宿主的前端新不新
+                if let r = text.range(of: #"dsh-live2d-pet ([0-9]+\.[0-9]+\.[0-9]+)"#, options: .regularExpression) {
+                    version = String(text[r]).replacingOccurrences(of: "dsh-live2d-pet ", with: "")
+                }
             }
             sem.signal()
         }.resume()
         _ = sem.wait(timeout: .now() + 3.0)
-        return (code, kind)
+        return (code, kind, version)
+    }
+
+    /// 这个宿主最近有多活跃（时间戳越大 = 越"正在干活"）。
+    /// 主人要求：**哪个东西在跑任务就连哪个**，而不是永远连第一个（以前老挂网页端）。
+    func activityOf(_ base: String, token: String) -> Int {
+        guard let u = URL(string: base + "/dsh-pet/state") else { return 0 }
+        var req = URLRequest(url: u)
+        req.timeoutInterval = 1.5
+        req.setValue("dsh_pet_desk=\(token)", forHTTPHeaderField: "Cookie")
+        let sem = DispatchSemaphore(value: 0)
+        var score = 0
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            if let d = data, let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] {
+                let last = (o["lastEventAt"] as? Int) ?? 0
+                let st = (o["status"] as? String) ?? ""
+                // 正在跑的加权 60 秒，保证"在干活的"压过"刚闲下来的"
+                score = last + ((st == "running" || st == "working") ? 60000 : 0)
+            }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 2.5)
+        return score
     }
 
     func load() {
@@ -574,26 +607,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         DispatchQueue.global().async { [weak self] in
             guard let self else { return }
             let pref = self.hostPref()
-            var okList: [(base: String, desktop: Bool?)] = []
+            var okList: [(base: String, desktop: Bool?, score: Int, ver: String)] = []
             var fallback: String?
             for base in self.candidateBases() {
                 let r = self.probeHost(base, token: token)
                 if r.code == 200 {
-                    okList.append((base, r.desktop))
-                    self.log("候选宿主可用: \(base) 类型=\(r.desktop == true ? "桌面版" : r.desktop == false ? "网页版" : "未知")")
+                    // 类型判定：① 插件自报（desktop:true/false，最准）
+                    //           ② 端口属主进程名（老插件也有这个信号，同样与端口号无关）
+                    var kind = r.desktop
+                    if kind == nil, let port = Int(base.split(separator: ":").last ?? "") {
+                        let owner = self.portOwners[port] ?? ""
+                        self.log("调试：属主表 \(self.portOwners) → 端口 \(port) 属主=\(owner.isEmpty ? "空" : owner)")
+                        if owner.contains("DeepSeek") { kind = true }
+                        else if owner.contains("node") || owner.contains("dsh") { kind = false }
+                    }
+                    let score = self.activityOf(base, token: token)
+                    okList.append((base, kind, score, r.version))
+                    self.log("候选宿主可用: \(base) 类型=\(kind == true ? "桌面版" : kind == false ? "网页版" : "未知") 前端版本=\(r.version.isEmpty ? "未知" : r.version) 活跃度=\(score)")
                 } else if r.code == 401, fallback == nil {
                     fallback = base
                 }
             }
             // 按用户档位挑：命中就选它；没命中就用第一个可用的（绝不让她连不上）
-            var pick: (base: String, desktop: Bool?)?
-            if pref == "desktop" { pick = okList.first { $0.desktop == true } }
-            else if pref == "web" { pick = okList.first { $0.desktop == false } }
+            var pick = pref == "desktop"
+                ? okList.first { $0.desktop == true }
+                : pref == "web" ? okList.first { $0.desktop == false } : nil
+            // 没指定档位（或档位没命中）→ 先比**前端版本**（绝不能连到旧界面 ✗），
+            // 版本相同再比活跃度（谁在跑任务就连谁）
+            if pick == nil {
+                pick = okList.sorted { a, b in
+                    if a.ver != b.ver { return a.ver > b.ver }
+                    return a.score > b.score
+                }.first
+            }
             if pick == nil { pick = okList.first }
             DispatchQueue.main.async {
                 if let p = pick {
                     let label = p.desktop == true ? "桌面版" : p.desktop == false ? "网页版" : "未知类型"
-                    self.log("连上宿主（\(label)，按档位 \(pref)）: \(p.base)")
+                    self.log("连上宿主（\(label)，按档位 \(pref)，前端 \(p.ver.isEmpty ? "未知" : p.ver)）: \(p.base)")
                     self.start(base: p.base, token: token)
                 } else if let fb = fallback {
                     self.log("找到宿主（票可能过期，先进去看）: \(fb)")

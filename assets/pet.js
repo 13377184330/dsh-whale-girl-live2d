@@ -2550,6 +2550,17 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
   let lastReportKey = ''
 
   /** 推一条工作简报：头顶出现信封；同一份内容不重复塞 */
+  /** 当前连的是哪一个宿主（桌面版/网页版 + 端口），简报里标明来源用 */
+  function hostLabel() {
+    try {
+      const b = window.__DSH_PET_BOOT__ || {}
+      const kind = b.desktop ? '桌面版' : b.port ? '网页版' : '未知'
+      return kind + (b.port ? ' · ' + b.port : '')
+    } catch (err) {
+      return '未知'
+    }
+  }
+
   function pushReport(title, body) {
     try {
       const text = String(body == null ? '' : body).trim()
@@ -2558,7 +2569,7 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       if (key === lastReportKey) return
       lastReportKey = key
       ensureMailUI()
-      mail.items.unshift({ title, body: text, at: Date.now(), read: false })
+      mail.items.unshift({ title, body: text, at: Date.now(), read: false, src: hostLabel() })
       if (mail.items.length > 12) mail.items.pop()
       mail.unread++
       renderMail()
@@ -2628,7 +2639,8 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       const row = $('div', 'dshp-report-item' + (it.read ? '' : ' dshp-report-new'))
       const t = new Date(it.at)
       const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')
-      row.append($('div', 'dshp-report-title', it.title + ' · ' + hh), $('div', 'dshp-report-text', it.body))
+      const src = it.src ? ' · 来源：' + it.src : ''
+      row.append($('div', 'dshp-report-title', it.title + ' · ' + hh + src), $('div', 'dshp-report-text', it.body))
       // 右上角的 × —— 看完就叉掉这一条
       const x = $('button', 'dshp-report-x', '×')
       x.title = '看完了，移除这条'
