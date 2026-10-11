@@ -3989,6 +3989,40 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     })
     row1.append(eyeBtn, mouthBtn)
 
+    // 连接哪一个 DSH：自动 / 桌面版 / 网页版
+    // （主人反馈：她有时连网页版、有时连桌面版，会「串对话」，所以要一个手动选择键并记住）
+    const hostRow = $('div', 'dshp-row')
+    const hostNow = (() => {
+      try {
+        const b = window.__DSH_PET_BOOT__ || {}
+        const kind = b.desktop ? '桌面版' : b.port ? '网页版' : '未知'
+        return kind + (b.port ? ' · ' + b.port : '')
+      } catch (err) {
+        return '未知'
+      }
+    })()
+    const hostBtns = [['auto', '自动'], ['desktop', '桌面版'], ['web', '网页版']].map(([v, label]) => {
+      const b = $('button', 'dshp-btn', label)
+      b.addEventListener('click', () => {
+        for (const [, x] of hostBtns) x.classList.remove('dshp-primary')
+        b.classList.add('dshp-primary')
+        try {
+          if (shell.on) shell.post('host:' + v)
+          ui.bubble.show('好，下次连' + (v === 'auto' ? '自动挑' : v === 'desktop' ? '桌面版' : '网页版'), {
+            name: 'DS 鲸鱼娘',
+            ttl: 2200,
+          })
+        } catch (err) {}
+      })
+      return [v, b]
+    })
+    hostRow.append(...hostBtns.map(([, b]) => b))
+    const hostHint = $('div', 'dshp-hint', '当前：' + hostNow + (shell.on ? '' : '（网页版里改不了，去桌面客户端改）'))
+    // 壳子加载后会调 DSHPet.setHostPref() 告诉我们它记着的是哪一档
+    window.__dshpSetHostPref = (v) => {
+      for (const [val, b] of hostBtns) b.classList.toggle('dshp-primary', val === v)
+    }
+
     const row0 = $('div', 'dshp-row')
     const resetAll = $('button', 'dshp-btn dshp-primary', '一键重置所有状态')
     resetAll.addEventListener('click', () => {
@@ -3997,7 +4031,7 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       ui.bubble.show('回到平常状态啦', { name: 'DS 鲸鱼娘', ttl: 2200 })
     })
     row0.appendChild(resetAll)
-    box.append(themeRow, row0)
+    box.append(hostRow, hostHint, themeRow, row0)
 
     const row2 = $('div', 'dshp-row')
     const reset = $('button', 'dshp-btn', '回到角落')
@@ -4527,6 +4561,12 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     hitTest,
     /** 隐藏 / 恢复。壳子（桌面版）收起成小球后，靠它把页面里的状态一起改回来 */
     setHidden,
+    /** 壳子告诉页面「你记着的连接档位是哪一档」（设置页据此高亮） */
+    setHostPref: (v) => {
+      try {
+        if (window.__dshpSetHostPref) window.__dshpSetHostPref(v)
+      } catch (err) {}
+    },
     /** 推一条工作简报（头顶出现信封，点开是大号面板） */
     report: (title, body) => pushReport(title || '工作简报', body),
     /** 性能档：壳子/设置页用它切「低性能模式」 */

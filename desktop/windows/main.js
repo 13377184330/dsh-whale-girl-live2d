@@ -28,6 +28,30 @@ const CANDIDATE_BASES = [
 ]
 let petBase = CANDIDATE_BASES[0]
 
+// 连接档位：auto（默认）/ desktop（官方桌面版）/ web（dsh web）
+// 主人反馈：她有时连网页版、有时连桌面版 → 会「串对话」，所以要能钉住并记住。
+function hostPref() {
+  try {
+    const p = path.join(app.getPath('userData'), 'settings.json')
+    const v = JSON.parse(fs.readFileSync(p, 'utf8')).hostPref
+    return v === 'desktop' || v === 'web' ? v : 'auto'
+  } catch (e) {
+    return 'auto'
+  }
+}
+function setHostPref(v) {
+  try {
+    const p = path.join(app.getPath('userData'), 'settings.json')
+    let cur = {}
+    try {
+      cur = JSON.parse(fs.readFileSync(p, 'utf8')) || {}
+    } catch (e) {}
+    cur.hostPref = v
+    fs.mkdirSync(path.dirname(p), { recursive: true })
+    fs.writeFileSync(p, JSON.stringify(cur, null, 2))
+  } catch (e) {}
+}
+
 /** 通行证文件里记录的宿主端口（插件写的，因机器而异 —— 不能写死） */
 function deskPort() {
   try {
@@ -186,7 +210,8 @@ function createMain() {
   })
   win.webContents.on('did-finish-load', () => {
     failCount = 0
-    win.webContents.executeJavaScript('window.DSHPet && DSHPet.setLowPower && DSHPet.setLowPower(' + lowPower + ')').catch(() => {})
+    win.webContents.executeJavaScript('window.DSHPet && DSHPet.setLowPower && DSHPet.setLowPower(' + lowPower + ')')
+    win.webContents.executeJavaScript("window.DSHPet && DSHPet.setHostPref && DSHPet.setHostPref('" + hostPref() + "')").catch(() => {}).catch(() => {})
     setTimeout(() => win.webContents.executeJavaScript('window.DSHPet && DSHPet.setHidden && DSHPet.setHidden(false)').catch(() => {}), 1200)
     setTimeout(() => win.webContents.executeJavaScript('window.DSHPet && DSHPet.setHidden && DSHPet.setHidden(false)').catch(() => {}), 3000)
   })
@@ -255,6 +280,13 @@ function createMain() {
       case 'expand':
         if (collapsed) expand()
         break
+      case 'host:auto':
+      case 'host:desktop':
+      case 'host:web':
+        setHostPref(msg.slice(5))
+        bootLog('连接档位切成 ' + msg.slice(5) + ' → 重新发现宿主')
+        load()
+        break
       case 'open-dsh':
         shell.openExternal(petBase + '/')
         break
@@ -303,8 +335,11 @@ function createMain() {
  * 以前写死 3080，导致只开官方桌面版的用户连不上。
  */
 async function discoverHost(token) {
-  let fallback = null
-  // 优先顺序：① 插件写下的真实端口 ② 本机实际在监听的端口（扫出来的） ③ 常见端口兜底
+  // 关键：**不靠端口号判断类型**（3080/19387 只是本机端口，别人可能完全不同）。
+  // 判据是宿主自己发出的前端里的启动配置：
+  //   跑在 Electron 里（官方桌面版）→ "desktop":true
+  //   普通 Node（dsh web）         → "desktop":false
+  const pref = hostPref()
   const scanned = await scanListeningPorts()
   const ordered = []
   const p = deskPort()
@@ -314,21 +349,35 @@ async function discoverHost(token) {
     const n = Number(base.split(':').pop())
     if (!ordered.includes(n)) ordered.push(n)
   }
-  const bases = ordered.map((n) => 'http://127.0.0.1:' + n)
-  for (const base of bases) {
+  const okList = []
+  let fallback = null
+  for (const n of ordered) {
+    const base = 'http://127.0.0.1:' + n
     try {
       const ctl = new AbortController()
-      const timer = setTimeout(() => ctl.abort(), 1500)
+      const timer = setTimeout(() => ctl.abort(), 1800)
       const res = await fetch(base + '/dsh-pet/pet.js', {
         headers: { Cookie: 'dsh_pet_desk=' + token },
         signal: ctl.signal,
       })
       clearTimeout(timer)
-      if (res.status === 200) return base
+      const text = res.status === 200 ? await res.text() : ''
+      if (res.status === 200) {
+        const desktop = /"desktop":true/.test(text) ? true : /"desktop":false/.test(text) ? false : null
+        okList.push({ base, desktop })
+        bootLog('候选宿主可用: ' + base + ' 类型=' + (desktop === true ? '桌面版' : desktop === false ? '网页版' : '未知'))
+        continue
+      }
       if (res.status === 401 && !fallback) fallback = base
-    } catch (e) {
-      /* 这个宿主没在跑，试下一个 */
-    }
+    } catch (e) {}
+  }
+  let pick = null
+  if (pref === 'desktop') pick = okList.find((x) => x.desktop === true)
+  else if (pref === 'web') pick = okList.find((x) => x.desktop === false)
+  if (!pick) pick = okList[0]
+  if (pick) {
+    bootLog('连上宿主（' + (pick.desktop === true ? '桌面版' : pick.desktop === false ? '网页版' : '未知类型') + '，按档位 ' + pref + '）: ' + pick.base)
+    return pick.base
   }
   return fallback
 }
@@ -352,6 +401,44 @@ async function load() {
 }
 
 /** 用 netstat 列出本机正在监听的端口（不靠固定端口去猜 —— 别人的端口可能完全不同） */
+/** 端口 → 进程名（Windows：netstat -ano 给 PID，再用 tasklist 查名字；best effort） */
+function scanPortOwners() {
+  return new Promise((resolve) => {
+    try {
+      exec('netstat -ano -p tcp', { timeout: 5000, windowsHide: true }, (err, stdout) => {
+        if (err || !stdout) return resolve({})
+        const portPid = {}
+        for (const line of String(stdout).split('\n')) {
+          if (!/LISTENING/i.test(line)) continue
+          const m = line.match(/(?:127\.0\.0\.1|0\.0\.0\.0|\[::1?\]|\[::\]):(\d{2,5})\s+\S+\s+LISTENING\s+(\d+)/i)
+          if (m) portPid[Number(m[1])] = Number(m[2])
+        }
+        const pids = [...new Set(Object.values(portPid))].slice(0, 12)
+        if (!pids.length) return resolve({})
+        const names = {}
+        let left = pids.length
+        const done = () => {
+          if (--left > 0) return
+          const out = {}
+          for (const [port, pid] of Object.entries(portPid)) out[port] = names[pid] || ''
+          resolve(out)
+        }
+        for (const pid of pids) {
+          exec('tasklist /FI "PID eq ' + pid + '" /NH /FO CSV', { timeout: 5000, windowsHide: true }, (e2, out2) => {
+            if (!e2 && out2) {
+              const mm = String(out2).match(/^"([^"]+)"/m)
+              if (mm) names[pid] = mm[1]
+            }
+            done()
+          })
+        }
+      })
+    } catch (e) {
+      resolve({})
+    }
+  })
+}
+
 function scanListeningPorts() {
   return new Promise((resolve) => {
     try {

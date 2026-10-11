@@ -495,10 +495,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return n
     }
 
+    /// 用户选的连接档位：auto（默认，自动挑）/ desktop（官方桌面版）/ web（dsh web）
+    /// 主人反馈：她有时连网页版、有时连桌面版 → 会「串对话」，所以要能手动钉住并记住。
+    func hostPref() -> String {
+        return UserDefaults.standard.string(forKey: "dshpHostPref") ?? "auto"
+    }
+    func setHostPref(_ v: String) {
+        UserDefaults.standard.set(v, forKey: "dshpHostPref")
+        UserDefaults.standard.synchronize()
+    }
+
+    /// 候选宿主列表：**不靠端口号判断类型**（3080/19387 只是本机端口，别人可能完全不同）。
+    /// 这里只负责「有哪些可能」，是网页版还是桌面版由 probeHost() 读宿主自己发出的
+    /// 启动配置标记（desktop:true/false）来判定。
     func candidateBases() -> [String] {
         var ports: [Int] = []
-        // ① 最可信：插件写下的真实端口（谁先开就写谁，所以「打开哪个都能连」）
+        // ① 插件写下的真实端口（谁先开就写谁，所以「打开哪个都能连」）
         if let n = deskPort() { ports.append(n) }
+        // ② 扫描本机所有监听端口（端口没监听时连接会被立刻拒绝，所以逐个探活很快）
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
         p.arguments = ["-nP", "-iTCP", "-sTCP:LISTEN"]
@@ -508,9 +522,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if (try? p.run()) != nil {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             p.waitUntilExit()
-            // 扫**所有**本机监听端口，不靠进程名/固定端口去猜 ——
-            // 别人的 DSH 可能是别的端口、进程名也不一定是 DeepSeek/node。
-            // 端口不监听时连接会被立刻拒绝，所以逐个探活很快（见 probeHost 的 1.5s 上限）。
             for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
                 let l = String(line)
                 guard l.contains("127.0.0.1:") || l.contains("*:") || l.contains("[::1]:") else { continue }
@@ -520,25 +531,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                 }
             }
         }
-        ports += [19387, 3080, 8080, 3000]   // 兜底：官方桌面版实测端口 + 常用 web 端口
+        // ③ 兜底：万一上面都没找到（例如异常环境），至少试这几个常见端口
+        ports += [19387, 3080, 8080, 3000]
         var seen = Set<Int>()
         return ports.filter { seen.insert($0).inserted }.map { "http://127.0.0.1:\($0)" }
     }
 
     /// 探一下某个宿主：200 = 就是它且票有效；401 = 插件在但票不对；其它 = 不是它
-    func probeHost(_ base: String, token: String) -> Int {
-        guard let u = URL(string: base + "/dsh-pet/pet.js") else { return -1 }
+    /// 探测一个候选宿主：返回（HTTP 状态码, 类型）。
+    ///
+    /// **类型不靠端口号判断** —— 端口千差万别（3080/19387 只是本机的）。
+    /// 判据是插件自己注入到前端里的启动配置：
+    ///   宿主跑在 Electron 里（官方桌面版）→ `"desktop":true`
+    ///   宿主是普通 Node（`dsh web`）      → `"desktop":false`
+    /// 所以只要读一下它发出来的 pet.js 就知道它是哪一种。
+    func probeHost(_ base: String, token: String) -> (code: Int, desktop: Bool?) {
+        guard let u = URL(string: base + "/dsh-pet/pet.js") else { return (-1, nil) }
         var req = URLRequest(url: u)
-        req.timeoutInterval = 1.5
+        req.timeoutInterval = 1.8
         req.setValue("dsh_pet_desk=\(token)", forHTTPHeaderField: "Cookie")
         let sem = DispatchSemaphore(value: 0)
         var code = -1
-        URLSession.shared.dataTask(with: req) { _, resp, _ in
+        var kind: Bool?
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
             if let h = resp as? HTTPURLResponse { code = h.statusCode }
+            if let d = data, let text = String(data: d, encoding: .utf8) {
+                if text.contains("\"desktop\":true") { kind = true }
+                else if text.contains("\"desktop\":false") { kind = false }
+            }
             sem.signal()
         }.resume()
-        _ = sem.wait(timeout: .now() + 2.5)
-        return code
+        _ = sem.wait(timeout: .now() + 3.0)
+        return (code, kind)
     }
 
     func load() {
@@ -549,18 +573,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         DispatchQueue.global().async { [weak self] in
             guard let self else { return }
+            let pref = self.hostPref()
+            var okList: [(base: String, desktop: Bool?)] = []
             var fallback: String?
             for base in self.candidateBases() {
-                let code = self.probeHost(base, token: token)
-                if code == 200 {
-                    self.log("找到宿主（票有效）: \(base)")
-                    DispatchQueue.main.async { self.start(base: base, token: token) }
-                    return
+                let r = self.probeHost(base, token: token)
+                if r.code == 200 {
+                    okList.append((base, r.desktop))
+                    self.log("候选宿主可用: \(base) 类型=\(r.desktop == true ? "桌面版" : r.desktop == false ? "网页版" : "未知")")
+                } else if r.code == 401, fallback == nil {
+                    fallback = base
                 }
-                if code == 401, fallback == nil { fallback = base }
             }
+            // 按用户档位挑：命中就选它；没命中就用第一个可用的（绝不让她连不上）
+            var pick: (base: String, desktop: Bool?)?
+            if pref == "desktop" { pick = okList.first { $0.desktop == true } }
+            else if pref == "web" { pick = okList.first { $0.desktop == false } }
+            if pick == nil { pick = okList.first }
             DispatchQueue.main.async {
-                if let fb = fallback {
+                if let p = pick {
+                    let label = p.desktop == true ? "桌面版" : p.desktop == false ? "网页版" : "未知类型"
+                    self.log("连上宿主（\(label)，按档位 \(pref)）: \(p.base)")
+                    self.start(base: p.base, token: token)
+                } else if let fb = fallback {
                     self.log("找到宿主（票可能过期，先进去看）: \(fb)")
                     self.start(base: fb, token: token)
                 } else {
@@ -651,6 +686,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "shown", "expand":
             guard ball?.isVisible == true else { return } // 已经是展开态 → 忽略
             expandFromBall()
+        case "host:auto", "host:desktop", "host:web":
+            // 设置页里那个「连接」开关：记住选择，然后立刻重新发现宿主
+            let v = String(String(describing: message.body).dropFirst(5))
+            setHostPref(v)
+            log("连接档位切成 \(v) → 重新发现宿主")
+            load()
         case "open-dsh":
             // 前端那个 ↗ 符号：用默认浏览器打开 DeepSeek Harness 界面
             if let u = URL(string: deskBase + "/") { NSWorkspace.shared.open(u) }
@@ -820,6 +861,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func applyLowPower() {
         let on = UserDefaults.standard.object(forKey: K_LOW) as? Bool ?? false
         web.evaluateJavaScript("window.DSHPet && DSHPet.setLowPower && DSHPet.setLowPower(\(on))",
+                               completionHandler: nil)
+        // 把「连接档位」告诉页面，设置页里的三个按钮才能正确高亮
+        web.evaluateJavaScript("window.DSHPet && DSHPet.setHostPref && DSHPet.setHostPref('\(hostPref())')",
                                completionHandler: nil)
     }
 
