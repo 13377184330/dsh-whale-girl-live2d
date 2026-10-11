@@ -609,27 +609,38 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
   width:max-content;white-space:nowrap;
   pointer-events:auto;opacity:0;transition:opacity .22s ease}
 /* ——— 工作简报：头顶的「信封」+ 点开的大号简报面板 ———
-   主人要求：任务汇报/需要确认时在头顶挂个信封，点开能看清全文（可滚动），
-   而且**优先级高于随机互动**（互动气泡不许把它顶掉）。 */
-.dshp-mail{position:absolute;left:50%;bottom:100%;
-  transform:translate(calc(-50% + var(--dshp-shift,0px) + 46px),calc(-6px + var(--dshp-shift-y,0px)));
-  width:34px;height:34px;border-radius:11px;border:1px solid var(--dshp-line);
-  background:var(--dshp-bg);color:var(--dshp-fg);font-size:15px;line-height:1;cursor:pointer;
-  display:grid;place-items:center;box-shadow:0 6px 16px rgba(10,20,50,.20);pointer-events:auto}
-.dshp-mail:hover{border-color:var(--dshp-accent);color:var(--dshp-accent)}
-.dshp-mail.dshp-mail-new{animation:dshp-mail-pulse 1.7s ease-in-out infinite;border-color:var(--dshp-accent)}
-@keyframes dshp-mail-pulse{
-  0%,100%{transform:translate(calc(-50% + var(--dshp-shift,0px) + 46px),calc(-6px + var(--dshp-shift-y,0px))) scale(1)}
-  50%{transform:translate(calc(-50% + var(--dshp-shift,0px) + 46px),calc(-11px + var(--dshp-shift-y,0px))) scale(1.08)}}
-.dshp-report{width:min(356px,calc(100vw - 30px));max-height:min(420px,calc(100vh - 140px));
+   信封是画出来的（不是 emoji）：白纸 + 鲸鱼蓝描边 + 折口，深浅背景下都清楚；
+   角标是微信那种「红圈白字」。整体小、浮在她头顶右上，不挡她本人。 */
+.dshp-mail{position:absolute;left:50%;bottom:100%;pointer-events:auto;cursor:pointer;
+  transform:translate(calc(-50% + var(--dshp-shift,0px) + 44px),calc(-8px + var(--dshp-shift-y,0px)));
+  width:34px;height:28px;padding:0;border:0;background:transparent;display:grid;place-items:center;
+  filter:drop-shadow(0 3px 7px rgba(10,20,50,.28));transition:transform .16s ease}
+.dshp-mail:hover{transform:translate(calc(-50% + var(--dshp-shift,0px) + 44px),calc(-12px + var(--dshp-shift-y,0px))) scale(1.06)}
+.dshp-mail svg{width:32px;height:25px;display:block}
+.dshp-mail .paper{fill:#f8fbff;stroke:#3b62f6;stroke-width:1.6}
+.dshp-mail .flap{fill:none;stroke:#3b62f6;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.dshp-mail .inner{fill:#dbe6ff}
+.dshp-mail-badge{position:absolute;right:-2px;bottom:-3px;min-width:15px;height:15px;padding:0 4px;
+  border-radius:999px;background:#ff3b30;color:#fff;font-size:10.5px;font-weight:700;line-height:15px;
+  text-align:center;border:1.5px solid var(--dshp-bg);box-sizing:content-box}
+.dshp-mail.dshp-mail-new svg{animation:dshp-mail-nudge 1.9s ease-in-out infinite}
+@keyframes dshp-mail-nudge{
+  0%,100%{transform:translateY(0) rotate(0deg)}
+  45%{transform:translateY(-2px) rotate(-3deg)}
+  70%{transform:translateY(0) rotate(2deg)}}
+.dshp-report{width:min(352px,calc(100vw - 30px));max-height:min(400px,calc(100vh - 150px));
   overflow:hidden;display:flex;flex-direction:column}
 .dshp-report-head{display:flex;align-items:center;justify-content:space-between;
   padding:2px 2px 8px;font-size:13px;font-weight:600}
 .dshp-report-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
   padding-right:8px;scrollbar-gutter:stable}
-.dshp-report-item{padding:8px 0;border-top:1px solid var(--dshp-line)}
+.dshp-report-item{position:relative;padding:8px 22px 8px 0;border-top:1px solid var(--dshp-line)}
 .dshp-report-item:first-child{border-top:0}
 .dshp-report-title{font-size:11.5px;opacity:.62;margin-bottom:4px}
+/* 每条简报右上角的「×」：看完了就叉掉它（全叉完信封自动消失） */
+.dshp-report-x{position:absolute;top:6px;right:0;width:18px;height:18px;padding:0;border:0;cursor:pointer;
+  border-radius:6px;background:transparent;color:var(--dshp-fg);opacity:.42;font-size:13px;line-height:1}
+.dshp-report-x:hover{opacity:1;background:rgba(255,80,80,.14);color:#ff5b52}
 .dshp-report-text{font-size:12.5px;line-height:1.62;white-space:pre-wrap;word-break:break-word}
 .dshp-report-item.dshp-report-new .dshp-report-title{color:var(--dshp-accent);opacity:.95}
 
@@ -2556,8 +2567,15 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
 
   function ensureMailUI() {
     if (mail.el || !ui || !ui.root) return
-    const badge = $('button', 'dshp-mail', '✉')
+    const badge = $('button', 'dshp-mail')
     badge.title = '工作简报 · 点开看完整内容'
+    badge.innerHTML =
+      '<svg viewBox="0 0 32 25" aria-hidden="true">' +
+      '<rect class="paper" x="1" y="1" width="30" height="23" rx="4"/>' +
+      '<path class="inner" d="M3.6 6.2 L16 14.4 L28.4 6.2 L28.4 20.6 L3.6 20.6 Z"/>' +
+      '<path class="flap" d="M2.4 3.4 L16 13.6 L29.6 3.4"/>' +
+      '</svg>' +
+      '<span class="dshp-mail-badge"></span>'
     badge.style.display = 'none'
     badge.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -2595,7 +2613,11 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     if (!mail.el) return
     mail.el.style.display = mail.items.length ? '' : 'none'
     mail.el.classList.toggle('dshp-mail-new', mail.unread > 0)
-    mail.el.textContent = mail.unread > 0 ? '✉' + mail.unread : '✉'
+    const badgeNum = mail.el.querySelector('.dshp-mail-badge')
+    if (badgeNum) {
+      badgeNum.textContent = mail.unread > 0 ? String(mail.unread) : ''
+      badgeNum.style.display = mail.unread > 0 ? '' : 'none'
+    }
     if (!mail.panel) return
     if (!mail.items.length) {
       mail.panel.classList.remove('dshp-on')
@@ -2607,6 +2629,18 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       const t = new Date(it.at)
       const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')
       row.append($('div', 'dshp-report-title', it.title + ' · ' + hh), $('div', 'dshp-report-text', it.body))
+      // 右上角的 × —— 看完就叉掉这一条
+      const x = $('button', 'dshp-report-x', '×')
+      x.title = '看完了，移除这条'
+      x.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const i = mail.items.indexOf(it)
+        if (i >= 0) mail.items.splice(i, 1)
+        if (!it.read) mail.unread = Math.max(0, mail.unread - 1)
+        renderMail()
+        try { clampPanels() } catch (err) {}
+      })
+      row.appendChild(x)
       mail.body.appendChild(row)
     }
   }

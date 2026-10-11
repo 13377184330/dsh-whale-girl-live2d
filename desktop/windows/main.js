@@ -99,7 +99,7 @@ async function setTokenCookie() {
 // ——————————————————————————————————————————————————————————————
 const hitJS = (x, y) => `(function(){try{
   var el=document.elementFromPoint(${x},${y});
-  var ui=!!(el&&el.closest&&el.closest('.dshp-panel,.dshp-menu,.dshp-hud,.dshp-bubble,.dshp-composer,.dshp-dock,.dshp-tab'));
+  var ui=!!(el&&el.closest&&el.closest('.dshp-panel,.dshp-menu,.dshp-hud,.dshp-bubble,.dshp-composer,.dshp-dock,.dshp-tab,.dshp-mail'));
   if(ui) return 'panel';
   if(window.DSHPet&&DSHPet.hitTest&&DSHPet.hitTest(${x},${y})) return 'model';
   return 'none';

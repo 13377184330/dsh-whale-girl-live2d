@@ -379,7 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     (function(){try{
       var x=__X__, y=__Y__;
       var el=document.elementFromPoint(x,y);
-      var ui = !!(el && el.closest && el.closest('.dshp-panel,.dshp-menu,.dshp-hud,.dshp-bubble,.dshp-composer,.dshp-dock,.dshp-tab'));
+      var ui = !!(el && el.closest && el.closest('.dshp-panel,.dshp-menu,.dshp-hud,.dshp-bubble,.dshp-composer,.dshp-dock,.dshp-tab,.dshp-mail'));
       if (ui) {
         // 只有面板里真正的控件（滑块/按钮/输入框）才把拖动让给网页；
         // 面板的空白处按「她」处理 —— 否则点她头顶附近会判成面板，
