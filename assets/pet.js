@@ -608,6 +608,31 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
   bottom:calc(-40px * var(--dshp-ds));display:flex;gap:calc(7px * var(--dshp-ds));
   width:max-content;white-space:nowrap;
   pointer-events:auto;opacity:0;transition:opacity .22s ease}
+/* ——— 工作简报：头顶的「信封」+ 点开的大号简报面板 ———
+   主人要求：任务汇报/需要确认时在头顶挂个信封，点开能看清全文（可滚动），
+   而且**优先级高于随机互动**（互动气泡不许把它顶掉）。 */
+.dshp-mail{position:absolute;left:50%;bottom:100%;
+  transform:translate(calc(-50% + var(--dshp-shift,0px) + 46px),calc(-6px + var(--dshp-shift-y,0px)));
+  width:34px;height:34px;border-radius:11px;border:1px solid var(--dshp-line);
+  background:var(--dshp-bg);color:var(--dshp-fg);font-size:15px;line-height:1;cursor:pointer;
+  display:grid;place-items:center;box-shadow:0 6px 16px rgba(10,20,50,.20);pointer-events:auto}
+.dshp-mail:hover{border-color:var(--dshp-accent);color:var(--dshp-accent)}
+.dshp-mail.dshp-mail-new{animation:dshp-mail-pulse 1.7s ease-in-out infinite;border-color:var(--dshp-accent)}
+@keyframes dshp-mail-pulse{
+  0%,100%{transform:translate(calc(-50% + var(--dshp-shift,0px) + 46px),calc(-6px + var(--dshp-shift-y,0px))) scale(1)}
+  50%{transform:translate(calc(-50% + var(--dshp-shift,0px) + 46px),calc(-11px + var(--dshp-shift-y,0px))) scale(1.08)}}
+.dshp-report{width:min(356px,calc(100vw - 30px));max-height:min(420px,calc(100vh - 140px));
+  overflow:hidden;display:flex;flex-direction:column}
+.dshp-report-head{display:flex;align-items:center;justify-content:space-between;
+  padding:2px 2px 8px;font-size:13px;font-weight:600}
+.dshp-report-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  padding-right:8px;scrollbar-gutter:stable}
+.dshp-report-item{padding:8px 0;border-top:1px solid var(--dshp-line)}
+.dshp-report-item:first-child{border-top:0}
+.dshp-report-title{font-size:11.5px;opacity:.62;margin-bottom:4px}
+.dshp-report-text{font-size:12.5px;line-height:1.62;white-space:pre-wrap;word-break:break-word}
+.dshp-report-item.dshp-report-new .dshp-report-title{color:var(--dshp-accent);opacity:.95}
+
 .dshp-root.dshp-hover .dshp-dock,.dshp-root.dshp-open .dshp-dock{opacity:1}
 /* 菜单/设置内容过长时**可滚动**（鼠标滚轮、触控板直接搓都行）。
    ⚠️ 这里刻意只给「内容区」限高 + overflow，**不把面板改成 flex 容器** ——
@@ -1675,6 +1700,8 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     placePanel(ui && ui.composer && ui.composer.el)
     placePanel(ui && ui.hud && ui.hud.el)
     placePanel(ui && ui.bubble && ui.bubble.el)
+    placePanel(ui && ui.report && ui.report.el)   // 工作简报面板
+    placePanel(ui && ui.mail && ui.mail.el)       // 头顶信封
   }
 
   function fitModel(explicitHeight) {
@@ -2451,10 +2478,18 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     let timer = null
     let streaming = false
     let buffer = ''
+    // 工作气泡占用中 → 互动气泡让位（见下面 show 里的优先级守卫）
+    let workHold = false
     const api = {
       el,
       show(text, opts) {
         opts = opts || {}
+        // 主人要求：**工作汇报优先级最高** —— 干活/汇报期间，随机互动气泡
+        // （戳一下、待机台词这些带 ttl 的）安静等着，不许把汇报顶掉。
+        // 正常模式下 workHold 为 false，互动照旧。
+        const isWork = !!(opts.work || opts.sticky || opts.stream || opts.busy)
+        if (!isWork && workHold && el.classList.contains('dshp-on')) return
+        if (isWork) workHold = true
         if (opts.name) headText.textContent = opts.name
         if (opts.stream) {
           if (!streaming) {
@@ -2483,6 +2518,7 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
         if (timer) clearTimeout(timer)
         timer = null
         streaming = false
+        workHold = false
         buffer = ''
         el.classList.remove('dshp-on')
       },
@@ -2491,6 +2527,103 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       },
     }
     return api
+  }
+
+  // ——————————————————————————————————————————————————————————————
+  // 八点四、工作简报（信封）
+  //   主人要求：有任务要汇报 / 需要确认时，在头顶挂一个「信封」；
+  //   点开是一个**大号、能看清、能滚**的简报面板（解决"气泡太小、滚太快看不清"）。
+  //   汇报的优先级高于随机互动（见气泡 show 里的 workHold 守卫）。
+  // ——————————————————————————————————————————————————————————————
+  const mail = { items: [], unread: 0, el: null, panel: null, body: null }
+  let lastReportKey = ''
+
+  /** 推一条工作简报：头顶出现信封；同一份内容不重复塞 */
+  function pushReport(title, body) {
+    try {
+      const text = String(body == null ? '' : body).trim()
+      if (!text) return
+      const key = title + '|' + text
+      if (key === lastReportKey) return
+      lastReportKey = key
+      ensureMailUI()
+      mail.items.unshift({ title, body: text, at: Date.now(), read: false })
+      if (mail.items.length > 12) mail.items.pop()
+      mail.unread++
+      renderMail()
+    } catch (err) {}
+  }
+
+  function ensureMailUI() {
+    if (mail.el || !ui || !ui.root) return
+    const badge = $('button', 'dshp-mail', '✉')
+    badge.title = '工作简报 · 点开看完整内容'
+    badge.style.display = 'none'
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation()
+      toggleReport()
+    })
+    const panel = $('div', 'dshp-panel dshp-report')
+    const head = $('div', 'dshp-report-head')
+    head.appendChild($('span', null, '工作简报'))
+    const close = $('button', 'dshp-close', '×')
+    close.addEventListener('click', (e) => {
+      e.stopPropagation()
+      panel.classList.remove('dshp-on')
+      markAllRead()
+    })
+    head.appendChild(close)
+    const body = $('div', 'dshp-report-body')
+    panel.append(head, body)
+    ui.root.append(badge, panel)
+    mail.el = badge
+    mail.panel = panel
+    mail.body = body
+    // 登记到 ui 上：这样 clampPanels() 会像对待菜单/钱包那样把它夹进屏幕
+    //（上一版漏了这步，面板右侧被切掉 —— 自检截图里能直接看到）
+    ui.mail = { el: badge }
+    ui.report = { el: panel }
+  }
+
+  function markAllRead() {
+    for (const it of mail.items) it.read = true
+    mail.unread = 0
+    renderMail()
+  }
+
+  function renderMail() {
+    if (!mail.el) return
+    mail.el.style.display = mail.items.length ? '' : 'none'
+    mail.el.classList.toggle('dshp-mail-new', mail.unread > 0)
+    mail.el.textContent = mail.unread > 0 ? '✉' + mail.unread : '✉'
+    if (!mail.panel) return
+    if (!mail.items.length) {
+      mail.panel.classList.remove('dshp-on')
+      return
+    }
+    mail.body.textContent = ''
+    for (const it of mail.items) {
+      const row = $('div', 'dshp-report-item' + (it.read ? '' : ' dshp-report-new'))
+      const t = new Date(it.at)
+      const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')
+      row.append($('div', 'dshp-report-title', it.title + ' · ' + hh), $('div', 'dshp-report-text', it.body))
+      mail.body.appendChild(row)
+    }
+  }
+
+  /** 点信封：开/关简报面板；打开即视为已读（面板里仍保留历史） */
+  function toggleReport() {
+    if (!mail.panel) return
+    const open = !mail.panel.classList.contains('dshp-on')
+    if (open) {
+      mail.panel.classList.add('dshp-on')
+      markAllRead()
+    } else {
+      mail.panel.classList.remove('dshp-on')
+    }
+    try {
+      clampPanels()
+    } catch (err) {}
   }
 
   // ——————————————————————————————————————————————————————————————
@@ -3332,8 +3465,9 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
         await hudFetch(false)
         return
       }
+      // 主人要求：取消「每轮结束自动弹余额」——只在右键时才弹。
+      // 这里仍然把账拉回来（右键打开时数字是新的），但**不自动开面板**。
       await hudFetch(false)
-      openHud({ autoHideMs: 9000 })
       // seq 没变说明账还没落，再补一次
       if (hud.seq === before) setTimeout(() => hudFetch(false), 1800)
     }, 1200)
@@ -3991,6 +4125,7 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
           setStatus('speaking')
           agent.lastText = m.text.slice(0, 4000)
           ui.bubble.show(agent.lastText, { name: 'DS 鲸鱼娘', sticky: true })
+        if (agent.lastText && agent.lastText.length > 60) pushReport('任务简报', agent.lastText)
         }
         if (m.usage) {
           const t = (m.usage.input || 0) + (m.usage.cache || 0) + (m.usage.output || 0)
@@ -4065,7 +4200,12 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
           hud.seq = m.turn.seq || hud.seq
           if (!hud.data) hudFetch(false)
           else hudRender()
-          if (!hud.open) openHud({ autoHideMs: 9000, flash: true })
+          // 同上：不自动弹余额，改为在头顶挂一个「信封」（点开是大号工作简报）
+          if (m.turn) {
+            const amt = m.turn.amount != null ? '¥' + Number(m.turn.amount).toFixed(4) : ''
+            const tk = m.turn.tokens ? ' · ' + m.turn.tokens + ' tokens' : ''
+            pushReport('本轮完成', amt || tk ? '花费 ' + amt + tk : '这一轮跑完了')
+          }
         }
         break
       }
@@ -4344,6 +4484,8 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     hitTest,
     /** 隐藏 / 恢复。壳子（桌面版）收起成小球后，靠它把页面里的状态一起改回来 */
     setHidden,
+    /** 推一条工作简报（头顶出现信封，点开是大号面板） */
+    report: (title, body) => pushReport(title || '工作简报', body),
     /** 性能档：壳子/设置页用它切「低性能模式」 */
     setLowPower,
     isLowPower: () => PERF.low,

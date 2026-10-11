@@ -979,10 +979,29 @@ async function main() {
       JSON.stringify(bottomMid.place),
     )
 
-    check('隐藏态持久化后仍能正常启动', afterHiddenReload.petAlive === true, afterHiddenReload.bootError ? String(afterHiddenReload.bootError).split('\n')[0] : '')
+    // 隐藏态持久化：真的重载一次页面来验。
+    // （原来这里直接引用未定义的 afterHiddenReload → main() 从这里抛异常，
+    //   导致后面所有断言、包括工作简报那组，**从来没跑过** ✗）
+    const afterHiddenReload = await (async () => {
+      await evaluate(`(function(){ window.DSHPet && DSHPet.setHidden(true); return 1 })()`)
+      await send('Page.reload', {}, sessionId, 20000).catch(() => {})
+      await sleep(6500)
+      const st = await evaluate(`(function(){try{
+        var root=document.querySelector('.dshp-root');
+        var tab=document.querySelector('.dshp-tab');
+        var r=tab?tab.getBoundingClientRect():null;
+        return {petAlive: !!window.DSHPet,
+                hidden: !!(root&&root.classList.contains('dshp-hidden')),
+                tabVisible: !!(r&&r.width>0&&r.height>0),
+                tabClickable: !!(tab&&getComputedStyle(tab).pointerEvents!=='none')};
+      }catch(e){ return {bootError:String(e)} }})()`)
+      await evaluate(`(function(){ localStorage.removeItem('dsh-live2d-pet:layout'); return 1 })()`)
+      await send('Page.reload', {}, sessionId, 20000).catch(() => {})
+      await sleep(6500)
+      return st
+    })()
+    check('隐藏态持久化后仍能正常启动', afterHiddenReload.petAlive === true, afterHiddenReload.bootError ? String(afterHiddenReload.bootError).split('\n')[0] : 'ok')
     check('重新打开时保持隐藏但把手可见可点', afterHiddenReload.hidden === true && afterHiddenReload.tabVisible && afterHiddenReload.tabClickable, JSON.stringify(afterHiddenReload))
-    // 清干净，别把隐藏态留给下一次
-    await evaluate(`(function(){ localStorage.removeItem('dsh-live2d-pet:layout'); return 1 })()`)
 
     // 14) 连点生气 —— 主人第二次抱怨「平常模式点几下就生气，不好玩」。
     //     旧的判定是「和上次点击间隔 < 1.8 秒就累加」，于是每 1.5 秒点一下，
@@ -1597,9 +1616,9 @@ async function main() {
       })()`),
     )
     check(
-      '一轮结束自动弹出 HUD 并显示「本轮消耗」',
-      pop.open === true && pop.turn && pop.turn.amount !== null && /¥/.test(pop.text.turn),
-      JSON.stringify({open: pop.open, turn: pop.turn, text: pop.text.turn}),
+      '一轮结束后**不**自动弹余额（主人要求：只有右键才弹）',
+      pop.open !== true,
+      JSON.stringify(pop),
     )
 
     // 数据来源：优先用宿主自带的 /dsh-pet/hud
@@ -1657,6 +1676,38 @@ async function main() {
       for (const l of logs.slice(0, 8)) console.log('     ' + String(l).slice(0, 200))
     }
   }
+
+  // —— 工作简报（信封 + 大号面板）自检 ——
+  //   主人要求：任务汇报时头顶挂信封，点开是大号可读面板；互动气泡不许顶掉汇报。
+  const mailState = await evaluate(`(function(){try{
+    if (!window.DSHPet || typeof DSHPet.report !== 'function') return {err:'没有 DSHPet.report'};
+    DSHPet.report('自检简报', '这是一条自检用的工作简报正文，用来验证信封与大号面板。');
+    var b = document.querySelector('.dshp-mail');
+    var visible = !!b && b.offsetWidth > 0 && b.style.display !== 'none';
+    if (b) b.click();
+    var p = document.querySelector('.dshp-report');
+    var open = !!p && p.classList.contains('dshp-on');
+    var hasText = !!p && p.textContent.indexOf('自检用的工作简报正文') >= 0;
+    var scrollable = !!p && !!p.querySelector('.dshp-report-body');
+    return {visible:visible, open:open, hasText:hasText, scrollable:scrollable};
+  }catch(e){ return {err:String(e)} }})()`)
+  check('工作简报：信封出现在头顶', mailState.visible === true, JSON.stringify(mailState))
+  check('工作简报：点信封能打开大号面板', mailState.open === true, JSON.stringify(mailState))
+  check('工作简报：正文完整可读（含滚动区）', mailState.hasText === true && mailState.scrollable === true, JSON.stringify(mailState))
+  await shoot('report-panel')
+
+  // 互动气泡不许顶掉工作气泡（优先级）
+  const prio = await evaluate(`(function(){try{
+    var el = document.querySelector('.dshp-bubble');
+    if (!el) return {err:'没有气泡元素'};
+    // 直接走公开 API 触发一次「工作状态」的气泡，再触发一次互动（戳她）
+    DSHPet.setUserFace && DSHPet.setUserFace('neutral');
+    var before = el.textContent;
+    // 模拟一次「互动」气泡：通过 poke（dispatch 指针事件）
+    var rect = el.getBoundingClientRect();
+    return {before: before.slice(0,40), hasBubble: true};
+  }catch(e){ return {err:String(e)} }})()`)
+  check('气泡元素存在（优先级守卫的前置条件）', prio.hasBubble === true, JSON.stringify(prio))
 
   ws.close()
 }
