@@ -77,6 +77,13 @@ let pollTimer = null
 let cursorFeed = null
 let lastCursor = null
 let dragTimer = null
+// 左键按住期间（不管是谁在搬她：壳子搬窗口 or 页面自己拖）：
+// cursorFeed 停止灌合成坐标、poll 也停止切换点击穿透。
+// 根因（#11 作者的分析 + #8 的复现）：页面自己拖她时 dragTimer 是 null，
+// 于是 ① 每 16ms 灌一次的合成坐标（整屏映射、纵向有偏差）和 ② 每 90ms 的穿透切换
+// 会跟页面拖动抢——鼠标短暂离开她 → 变穿透 → 拖动断掉 → 表现成「按住移动时上下抽搐」。
+let pointerHeld = false
+let pointerHeldSince = 0
 let dragFrom = null
 // 贴边小球单独一份拖动状态：原来和主窗口共用 dragFrom，收起状态下按小球会把
 // 已经 hide() 的主窗口一路搬走（B站/PR 反馈的真实 bug）
@@ -144,6 +151,10 @@ async function poll() {
     return
   }
   if (dragTimer) return // 拖动中不抢事件（否则鼠标一离开她就变穿透，拖动会断）
+  if (pointerHeld) {
+    if (Date.now() - pointerHeldSince > 30000) pointerHeld = false // 兜底：mouseup 丢了也别卡死
+    else return // 左键按住（页面在拖她）：别切穿透，否则拖动会断/抽搐
+  }
   try {
     const kind = await win.webContents.executeJavaScript(hitJS(Math.round(p.x - b.x), Math.round(p.y - b.y)))
     lastHit = kind
@@ -237,6 +248,8 @@ function createMain() {
 
   // 拖动：页面里按下她 → 交给主进程搬窗口（拖动期间用 16ms 快速轮询，跟手）
   ipcMain.on('drag-start', async (_e, at) => {
+  pointerHeld = true
+  pointerHeldSince = Date.now()
     // 小球用的是同一个 preload，也会发 drag-start；主窗口只是 hide() 没 destroy()，
     // 不加这条守卫就会把看不见的主窗口搬走（PR 反馈）
     if (!win || win.isDestroyed() || !win.isVisible()) return
@@ -260,6 +273,7 @@ function createMain() {
     win.webContents.executeJavaScript("document.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true}))").catch(() => {})
   })
   ipcMain.on('drag-end', () => {
+  pointerHeld = false
     clearInterval(dragTimer)
     dragTimer = null
     dragFrom = null
@@ -302,7 +316,7 @@ function createMain() {
   // 用 Electron 原生 sendInputEvent 把全局光标位置喂进去（比 executeJavaScript 省得多）。
   cursorFeed = setInterval(() => {
     try {
-      if (!win || win.isDestroyed() || !win.isVisible() || dragTimer) return
+      if (!win || win.isDestroyed() || !win.isVisible() || dragTimer || pointerHeld) return
       const p = screen.getCursorScreenPoint()
       // 与 macOS 同理：原来 60ms + 3px 死区会让视线目标「跳着给」，看着卡
       if (lastCursor && Math.abs(lastCursor.x - p.x) < 1 && Math.abs(lastCursor.y - p.y) < 1) return

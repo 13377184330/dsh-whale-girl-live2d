@@ -565,6 +565,11 @@
   --dshp-fg:#132043;--dshp-bg:rgba(246,249,255,.96);--dshp-line:rgba(30,60,130,.14);
   /* 鲸鱼蓝（和官网、App 图标同一套色）；只改颜色，别的一律不动 */
   --dshp-accent:#3b62f6;--dshp-radius:14px;transition:opacity .25s ease}
+/* 整只桌宠界面默认**不可选中**（拖动时不会把文字/页签一起选走，#11 提到的问题）；
+   但聊天气泡和简报正文要保持可选中 —— 主人可能要复制内容。 */
+.dshp-root{user-select:none;-webkit-user-select:none}
+.dshp-bubble,.dshp-report-text{user-select:text;-webkit-user-select:text}
+
 .dshp-root.dshp-hidden{opacity:0;pointer-events:none!important}
 /* 恢复用的把手挂在 body 上、不在 .dshp-root 里，所以这里必须是 body 级类：
    用后代选择器会永远匹配不到，隐藏之后就再也找不回来了。 */
@@ -1925,6 +1930,12 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     return clamp(top, -20, maxTop)
   }
 
+  /** 水平方向同样要夹（issue #13：窗口变小后她整只停在屏幕外 ✗ —— 之前只有 Y 夹了） */
+  function clampX(left, width, vw) {
+    const maxLeft = Math.max(-20, (vw || window.innerWidth) - (width || 0) - 12)
+    return clamp(left, -40, maxLeft)
+  }
+
   /** 贴住某一侧墙：left/right + top 固定，竖直位置由主人自己定 */
   function applyEdge(edge, y) {
     const root = ui.root
@@ -1960,7 +1971,9 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       return
     }
     if (layout.x != null && layout.y != null) {
-      root.style.left = layout.x + 'px'
+      const w = root.getBoundingClientRect().width || 0
+      // issue #13：X 以前没夹 —— 换显示器/窗口变小后她会整只落在屏幕外 → 也夹一下
+      root.style.left = clampX(layout.x, w, window.innerWidth) + 'px'
       root.style.top = clampY(layout.y, h, vh) + 'px'
       root.style.right = 'auto'
       root.style.bottom = 'auto'
