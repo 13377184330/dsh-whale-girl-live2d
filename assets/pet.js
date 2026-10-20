@@ -628,21 +628,39 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
   0%,100%{transform:translateY(0) rotate(0deg)}
   45%{transform:translateY(-2px) rotate(-3deg)}
   70%{transform:translateY(0) rotate(2deg)}}
-.dshp-report{width:min(352px,calc(100vw - 30px));max-height:min(400px,calc(100vh - 150px));
-  overflow:hidden;display:flex;flex-direction:column}
-.dshp-report-head{display:flex;align-items:center;justify-content:space-between;
-  padding:2px 2px 8px;font-size:13px;font-weight:600}
+.dshp-report{width:min(360px,calc(100vw - 30px));max-height:min(430px,calc(100vh - 150px));
+  overflow:hidden;display:flex;flex-direction:column;transition:opacity .16s ease,transform .16s ease}
+/* 有互动时面板先「隐身」，互动结束后再回来（见 onBubbleEvent） */
+.dshp-report.dshp-report-yield{opacity:0;transform:translateY(-5px) scale(.985);pointer-events:none}
+.dshp-report-head{display:flex;align-items:center;gap:6px;padding:1px 2px 8px;font-size:13px;font-weight:600}
+.dshp-report-head .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshp-report-head .n{font-size:11px;font-weight:500;color:var(--dshp-accent);opacity:.9;flex-shrink:0}
+.dshp-report-acts{display:flex;align-items:center;gap:1px;flex-shrink:0}
+.dshp-report-act{height:20px;padding:0 5px;border:0;border-radius:6px;background:transparent;
+  color:var(--dshp-fg);opacity:.55;font-size:11px;cursor:pointer;line-height:20px}
+.dshp-report-act:hover{opacity:1;background:rgba(90,130,255,.12)}
+.dshp-report-min,.dshp-report-close{width:20px;height:20px;padding:0;border:0;border-radius:6px;
+  background:transparent;color:var(--dshp-fg);opacity:.5;font-size:14px;line-height:20px;cursor:pointer;text-align:center}
+.dshp-report-min:hover{opacity:1;background:rgba(90,130,255,.12)}
+.dshp-report-close:hover{opacity:1;background:rgba(255,80,80,.14);color:#ff5b52}
 .dshp-report-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
   padding-right:8px;scrollbar-gutter:stable}
-.dshp-report-item{position:relative;padding:8px 22px 8px 0;border-top:1px solid var(--dshp-line)}
+.dshp-report-item{position:relative;padding:8px 0 9px;border-top:1px solid var(--dshp-line)}
 .dshp-report-item:first-child{border-top:0}
-.dshp-report-title{font-size:11.5px;opacity:.62;margin-bottom:4px}
-/* 每条简报右上角的「×」：看完了就叉掉它（全叉完信封自动消失） */
-.dshp-report-x{position:absolute;top:6px;right:0;width:18px;height:18px;padding:0;border:0;cursor:pointer;
-  border-radius:6px;background:transparent;color:var(--dshp-fg);opacity:.42;font-size:13px;line-height:1}
-.dshp-report-x:hover{opacity:1;background:rgba(255,80,80,.14);color:#ff5b52}
+.dshp-report-meta{display:flex;align-items:center;gap:5px;font-size:11px;opacity:.6;
+  margin-bottom:3px;padding-right:20px}
+.dshp-report-dot{width:6px;height:6px;border-radius:50%;background:#ff3b30;flex-shrink:0}
+.dshp-report-item.dshp-report-new .dshp-report-meta{opacity:.95;color:var(--dshp-accent)}
 .dshp-report-text{font-size:12.5px;line-height:1.62;white-space:pre-wrap;word-break:break-word}
-.dshp-report-item.dshp-report-new .dshp-report-title{color:var(--dshp-accent);opacity:.95}
+.dshp-report-row{display:flex;justify-content:flex-end;gap:4px;margin-top:6px}
+.dshp-report-btn{height:19px;padding:0 7px;border:1px solid var(--dshp-line);border-radius:6px;
+  background:transparent;color:var(--dshp-fg);font-size:11px;cursor:pointer;line-height:17px}
+.dshp-report-btn:hover{border-color:var(--dshp-accent);color:var(--dshp-accent)}
+.dshp-report-btn.del:hover{border-color:#ff5b52;color:#ff5b52}
+.dshp-report-btn.on{opacity:.4;cursor:default}
+.dshp-report-x{position:absolute;top:6px;right:0;width:18px;height:18px;padding:0;border:0;cursor:pointer;
+  border-radius:6px;background:transparent;color:var(--dshp-fg);opacity:.42;font-size:13px;line-height:18px}
+.dshp-report-x:hover{opacity:1;background:rgba(255,80,80,.14);color:#ff5b52}
 
 .dshp-root.dshp-hover .dshp-dock,.dshp-root.dshp-open .dshp-dock{opacity:1}
 /* 菜单/设置内容过长时**可滚动**（鼠标滚轮、触控板直接搓都行）。
@@ -2501,6 +2519,8 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
         const isWork = !!(opts.work || opts.sticky || opts.stream || opts.busy)
         if (!isWork && workHold && el.classList.contains('dshp-on')) return
         if (isWork) workHold = true
+        // 互动气泡出现 → 工作简报面板暂时隐身（互动结束后再回来）
+        onBubbleEvent(isWork, true)
         if (opts.name) headText.textContent = opts.name
         if (opts.stream) {
           if (!streaming) {
@@ -2529,7 +2549,10 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
         if (timer) clearTimeout(timer)
         timer = null
         streaming = false
+        const wasWork = workHold
         workHold = false
+        // 互动气泡消失 → 简报面板恢复显示
+        onBubbleEvent(wasWork, false)
         buffer = ''
         el.classList.remove('dshp-on')
       },
@@ -2546,10 +2569,18 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
   //   点开是一个**大号、能看清、能滚**的简报面板（解决"气泡太小、滚太快看不清"）。
   //   汇报的优先级高于随机互动（见气泡 show 里的 workHold 守卫）。
   // ——————————————————————————————————————————————————————————————
-  const mail = { items: [], unread: 0, el: null, panel: null, body: null }
+  const mail = {
+    items: [],
+    unread: 0,
+    el: null,
+    panel: null,
+    body: null,
+    autoTimer: 0,
+    hover: false,
+    yieldWasOpen: false,
+  }
   let lastReportKey = ''
 
-  /** 推一条工作简报：头顶出现信封；同一份内容不重复塞 */
   /** 当前连的是哪一个宿主（桌面版/网页版 + 端口），简报里标明来源用 */
   function hostLabel() {
     try {
@@ -2561,6 +2592,19 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
     }
   }
 
+  /** 时间显示：今天只给 HH:MM，昨天给「昨天 HH:MM」，更早给「M月D日 HH:MM」 */
+  function mailTime(ts) {
+    const d = new Date(ts)
+    const now = new Date()
+    const pad = (n) => String(n).padStart(2, '0')
+    const hm = pad(d.getHours()) + ':' + pad(d.getMinutes())
+    const days = Math.floor((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000)
+    if (days <= 0) return hm
+    if (days === 1) return '昨天 ' + hm
+    return d.getMonth() + 1 + '月' + d.getDate() + '日 ' + hm
+  }
+
+  /** 推一条工作简报：头顶出现信封；同一份内容不重复塞 */
   function pushReport(title, body) {
     try {
       const text = String(body == null ? '' : body).trim()
@@ -2570,7 +2614,7 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       lastReportKey = key
       ensureMailUI()
       mail.items.unshift({ title, body: text, at: Date.now(), read: false, src: hostLabel() })
-      if (mail.items.length > 12) mail.items.pop()
+      if (mail.items.length > 30) mail.items.length = 30
       mail.unread++
       renderMail()
     } catch (err) {}
@@ -2592,32 +2636,161 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       e.stopPropagation()
       toggleReport()
     })
+
     const panel = $('div', 'dshp-panel dshp-report')
     const head = $('div', 'dshp-report-head')
-    head.appendChild($('span', null, '工作简报'))
-    const close = $('button', 'dshp-close', '×')
+    const title = $('span', 't', '工作简报')
+    const count = $('span', 'n', '')
+    const acts = $('div', 'dshp-report-acts')
+
+    const readAll = $('button', 'dshp-report-act', '全部已读')
+    readAll.title = '把未读标记全部清掉（不删内容）'
+    readAll.addEventListener('click', (e) => {
+      e.stopPropagation()
+      markAllRead()
+      touchReport()
+    })
+    const clearAll = $('button', 'dshp-report-act', '清空')
+    clearAll.title = '删除全部简报'
+    clearAll.addEventListener('click', (e) => {
+      e.stopPropagation()
+      clearAllMail()
+    })
+    const min = $('button', 'dshp-report-min', '–')
+    min.title = '收起面板（信封还在）'
+    min.addEventListener('click', (e) => {
+      e.stopPropagation()
+      hideReport(false)
+    })
+    const close = $('button', 'dshp-report-close', '×')
+    close.title = '关闭（标记为已读后收起）'
     close.addEventListener('click', (e) => {
       e.stopPropagation()
-      panel.classList.remove('dshp-on')
-      markAllRead()
+      hideReport(true)
     })
-    head.appendChild(close)
+    acts.append(readAll, clearAll, min, close)
+    head.append(title, count, acts)
+
     const body = $('div', 'dshp-report-body')
     panel.append(head, body)
+
+    // 鼠标放进面板里 / 移出去：自动收起计时器跟着暂停/继续
+    panel.addEventListener('pointerenter', () => {
+      mail.hover = true
+      clearTimeout(mail.autoTimer)
+    })
+    panel.addEventListener('pointerleave', () => {
+      mail.hover = false
+      touchReport()
+    })
+    // 滚到哪读到哪：进入视口的条目自动标记已读（像微信消息列表）
+    body.addEventListener(
+      'scroll',
+      () => {
+        try {
+          const br = body.getBoundingClientRect()
+          for (const row of body.querySelectorAll('.dshp-report-item')) {
+            const it = mail.items[Number(row.dataset.i)]
+            if (!it || it.read) continue
+            const r = row.getBoundingClientRect()
+            if (r.top >= br.top - 4 && r.bottom <= br.bottom + 4) markItemRead(it)
+          }
+        } catch (err) {}
+        touchReport()
+      },
+      { passive: true },
+    )
+
     ui.root.append(badge, panel)
     mail.el = badge
     mail.panel = panel
     mail.body = body
-    // 登记到 ui 上：这样 clampPanels() 会像对待菜单/钱包那样把它夹进屏幕
-    //（上一版漏了这步，面板右侧被切掉 —— 自检截图里能直接看到）
+    mail.titleEl = title
+    mail.countEl = count
+    // 登记到 ui 上：clampPanels() 会把它夹进屏幕
     ui.mail = { el: badge }
     ui.report = { el: panel }
+  }
+
+  /** 面板打开后如果一直没人理，20 秒自动收起来（主人要求：不能一直挡着） */
+  function touchReport() {
+    clearTimeout(mail.autoTimer)
+    if (!mail.panel || !mail.panel.classList.contains('dshp-on')) return
+    mail.autoTimer = setTimeout(() => {
+      if (!mail.hover) hideReport(false)
+    }, 20000)
   }
 
   function markAllRead() {
     for (const it of mail.items) it.read = true
     mail.unread = 0
     renderMail()
+  }
+
+  function markItemRead(it) {
+    if (!it || it.read) return
+    it.read = true
+    mail.unread = Math.max(0, mail.unread - 1)
+    renderMail()
+  }
+
+  function clearAllMail() {
+    mail.items.length = 0
+    mail.unread = 0
+    renderMail()
+    try {
+      clampPanels()
+    } catch (err) {}
+  }
+
+  function hideReport(allRead) {
+    if (!mail.panel) return
+    mail.panel.classList.remove('dshp-on')
+    mail.panel.classList.remove('dshp-report-yield')
+    mail.yieldWasOpen = false
+    clearTimeout(mail.autoTimer)
+    if (allRead) markAllRead()
+  }
+
+  function showReport() {
+    if (!mail.panel) return
+    mail.panel.classList.add('dshp-on')
+    mail.panel.classList.remove('dshp-report-yield')
+    markAllRead() // 点开信封 = 已读（微信式）
+    touchReport()
+    try {
+      clampPanels()
+    } catch (err) {}
+  }
+
+  /** 点信封：开/关简报面板 */
+  function toggleReport() {
+    if (!mail.panel) return
+    if (mail.panel.classList.contains('dshp-on')) hideReport(false)
+    else showReport()
+  }
+
+  /**
+   * 互动气泡出现 → 简报面板**先隐身**；互动消失 → 面板**再回来**。
+   * 工作/汇报类气泡不算互动，不隐身（它本身就是汇报）。
+   */
+  function onBubbleEvent(isWork, visible) {
+    try {
+      if (!mail.panel || isWork) return
+      const open = mail.panel.classList.contains('dshp-on')
+      if (visible) {
+        if (open) {
+          mail.yieldWasOpen = true
+          mail.panel.classList.add('dshp-report-yield')
+        }
+      } else if (mail.yieldWasOpen) {
+        mail.yieldWasOpen = false
+        if (mail.panel.classList.contains('dshp-on')) {
+          mail.panel.classList.remove('dshp-report-yield')
+          touchReport()
+        }
+      }
+    } catch (err) {}
   }
 
   function renderMail() {
@@ -2630,46 +2803,56 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       badgeNum.style.display = mail.unread > 0 ? '' : 'none'
     }
     if (!mail.panel) return
+    if (mail.countEl) mail.countEl.textContent = mail.unread > 0 ? mail.unread + ' 条未读' : ''
     if (!mail.items.length) {
       mail.panel.classList.remove('dshp-on')
+      mail.body.textContent = ''
       return
     }
     mail.body.textContent = ''
-    for (const it of mail.items) {
+    mail.items.forEach((it, i) => {
       const row = $('div', 'dshp-report-item' + (it.read ? '' : ' dshp-report-new'))
-      const t = new Date(it.at)
-      const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')
-      const src = it.src ? ' · 来源：' + it.src : ''
-      row.append($('div', 'dshp-report-title', it.title + ' · ' + hh + src), $('div', 'dshp-report-text', it.body))
-      // 右上角的 × —— 看完就叉掉这一条
-      const x = $('button', 'dshp-report-x', '×')
-      x.title = '看完了，移除这条'
-      x.addEventListener('click', (e) => {
+      row.dataset.i = String(i)
+      const meta = $('div', 'dshp-report-meta')
+      if (!it.read) meta.appendChild($('span', 'dshp-report-dot'))
+      meta.append($('span', null, mailTime(it.at) + ' · ' + it.title + (it.src ? ' · ' + it.src : '')))
+      const text = $('div', 'dshp-report-text', it.body)
+      const line = $('div', 'dshp-report-row')
+      const readBtn = $('button', 'dshp-report-btn' + (it.read ? ' on' : ''), it.read ? '已阅 ✓' : '标记已阅')
+      readBtn.addEventListener('click', (e) => {
         e.stopPropagation()
-        const i = mail.items.indexOf(it)
-        if (i >= 0) mail.items.splice(i, 1)
+        markItemRead(it)
+        touchReport()
+      })
+      const del = $('button', 'dshp-report-btn del', '删除')
+      del.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const idx = mail.items.indexOf(it)
+        if (idx >= 0) mail.items.splice(idx, 1)
         if (!it.read) mail.unread = Math.max(0, mail.unread - 1)
         renderMail()
-        try { clampPanels() } catch (err) {}
+        try {
+          clampPanels()
+        } catch (err) {}
+      })
+      line.append(readBtn, del)
+      row.append(meta, text, line)
+      // 右上角的 × —— 快速移除这条
+      const x = $('button', 'dshp-report-x', '×')
+      x.title = '移除这条'
+      x.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const idx = mail.items.indexOf(it)
+        if (idx >= 0) mail.items.splice(idx, 1)
+        if (!it.read) mail.unread = Math.max(0, mail.unread - 1)
+        renderMail()
+        try {
+          clampPanels()
+        } catch (err) {}
       })
       row.appendChild(x)
       mail.body.appendChild(row)
-    }
-  }
-
-  /** 点信封：开/关简报面板；打开即视为已读（面板里仍保留历史） */
-  function toggleReport() {
-    if (!mail.panel) return
-    const open = !mail.panel.classList.contains('dshp-on')
-    if (open) {
-      mail.panel.classList.add('dshp-on')
-      markAllRead()
-    } else {
-      mail.panel.classList.remove('dshp-on')
-    }
-    try {
-      clampPanels()
-    } catch (err) {}
+    })
   }
 
   // ——————————————————————————————————————————————————————————————

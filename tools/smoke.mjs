@@ -1693,6 +1693,33 @@ async function main() {
   }catch(e){ return {err:String(e)} }})()`)
   check('工作简报：信封出现在头顶', mailState.visible === true, JSON.stringify(mailState))
   check('工作简报：点信封能打开大号面板', mailState.open === true, JSON.stringify(mailState))
+  // 简报面板的操作按钮（主人要求的：全部已读 / 清空 / 最小化）
+  const mailOps = await evaluate(`(function(){try{
+    var p=document.querySelector('.dshp-report');
+    if(!p) return {err:'没有面板'};
+    var acts=[].map.call(p.querySelectorAll('.dshp-report-act,.dshp-report-min,.dshp-report-close'),function(b){return b.textContent});
+    // 再加一条，验证「全部已读」清掉红点
+    DSHPet.report('自检二','第二条');
+    var badge=document.querySelector('.dshp-mail-badge');
+    var before=badge?badge.textContent:'';
+    var readAll=[].find.call(p.querySelectorAll('.dshp-report-act'),function(b){return b.textContent.indexOf('全部已读')>=0});
+    if(readAll) readAll.click();
+    var after=badge?badge.textContent:'';
+    return {acts:acts, before:before, after:after, unreadCleared: (before!=='' && after==='')};
+  }catch(e){ return {err:String(e)} }})()`)
+  check('简报面板有「全部已读/清空/–/×」按钮', Array.isArray(mailOps.acts) && mailOps.acts.length >= 4, JSON.stringify(mailOps.acts))
+  check('「全部已读」能清掉红点', mailOps.unreadCleared === true, JSON.stringify(mailOps))
+  const mailClear = await evaluate(`(function(){try{
+    DSHPet.report('自检三','第三条');
+    var p=document.querySelector('.dshp-report');
+    var clearBtn=[].find.call(p.querySelectorAll('.dshp-report-act'),function(b){return b.textContent.indexOf('清空')>=0});
+    if(clearBtn) clearBtn.click();
+    var left=p.querySelectorAll('.dshp-report-item').length;
+    var badge=document.querySelector('.dshp-mail');
+    return {left:left, mailHidden: !!badge && (badge.style.display==='none' || badge.offsetWidth===0)};
+  }catch(e){ return {err:String(e)} }})()`)
+  check('「清空」能删掉全部简报（信封消失）', mailClear.left === 0 && mailClear.mailHidden === true, JSON.stringify(mailClear))
+
   check('工作简报：正文完整可读（含滚动区）', mailState.hasText === true && mailState.scrollable === true, JSON.stringify(mailState))
   await shoot('report-panel')
 
