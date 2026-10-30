@@ -4342,6 +4342,32 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
 
   function handleEvent(m) {
     switch (m.t) {
+      // —— 人生引擎联动（dsh-feiyu-life）：她的人生驱动她的表情与气泡 ——
+      case 'feiyu-diary': {
+        agent.lastActivity = Date.now()
+        wakeUp()
+        setStatus('speaking')
+        rig.talking = true
+        act({ mood: 'happy', props: IDLE_PROPS, line: '', ms: 0 })
+        const text = String(m.text || '').slice(0, 600)
+        ui.bubble.show(text || '（她写了篇日记）', { name: '大肥鱼', ttl: 8000 })
+        setTimeout(() => {
+          rig.talking = false
+          setStatus('idle')
+        }, 3200)
+        break
+      }
+      case 'feiyu-mood': {
+        const FACE = { happy: 'happy', sad: 'pout', normal: 'idle' }
+        act({ mood: FACE[m.mood] || 'idle', props: IDLE_PROPS, line: '', ms: 5000 })
+        break
+      }
+      case 'feiyu-out': {
+        agent.lastActivity = Date.now()
+        ui.bubble.show('她出门去' + (m.destination || '远方') + '了…', { name: '大肥鱼', ttl: 4500 })
+        break
+      }
+
       case 'hello':
         agent.status = m.status || 'idle'
         break
