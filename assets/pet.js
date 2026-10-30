@@ -3905,6 +3905,7 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
   function bindMenu(u) {
     const TABS = [
       ['face', '表情'],
+      ['life', '人生'],
       ['decor', '装饰'],
       ['scene', '场景'],
       ['action', '动作'],
@@ -3999,6 +4000,37 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
         grid,
         $('div', 'dshp-hint', '点一下 = 换脸 + 说一句配好的话，**三四秒后自己让位**（平常状态永远是平常脸）。\n期间她自己的表情、agent 事件、或者你再点一个，都会把它顶掉。'),
       )
+      return
+    }
+    // —— 人生页（dsh-feiyu-life）：她的心情/旅程/日记，融在桌宠自己的菜单里 ——
+    if (id === 'life') {
+      const box = $('div', 'dshp-hint')
+      box.textContent = '……'
+      panes.appendChild(box)
+      fetch('/feiyu-life/state')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((s) => {
+          box.textContent = ''
+          if (!s) {
+            box.textContent = '（人生引擎未安装：dsh plugin add npm:dsh-feiyu-life 后，这里会有她的人生）'
+            return
+          }
+          const mood = s.mood || {}
+          const doing = s.sleeping ? '睡着了 zzZ' : (s.doing === 'roaming' ? '出门旅行中' : '在窝里待着')
+          box.appendChild($('div', 'dshp-hint dshp-now', `心情：${mood.word || '还行'}（${mood.value}）· ${doing}`))
+          const trips = (s.journeys || []).slice(0, 3)
+          if (trips.length) {
+            for (const j of trips) {
+              box.appendChild($('div', 'dshp-hint', `${j.at} · ${j.destination}  「${j.sight}」`))
+            }
+          } else {
+            box.appendChild($('div', 'dshp-hint', '还没有旅程。她大概在窝里睡觉。'))
+          }
+          box.appendChild($('div', 'dshp-hint', `— 已写 ${s.stats.diaryCount} 篇日记 · 今日漫游 ${s.stats.todayRoams}/${s.stats.dailyMax}`))
+        })
+        .catch(() => {
+          box.textContent = '（她的人生暂时取不到……人生引擎可能没启动）'
+        })
       return
     }
     if (id === 'decor' || id === 'scene') {
