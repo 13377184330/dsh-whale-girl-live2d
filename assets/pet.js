@@ -4026,6 +4026,16 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
           } else {
             box.appendChild($('div', 'dshp-hint', '还没有旅程。她大概在窝里睡觉。'))
           }
+          const card = (s.postcards || [])[0]
+          if (card && card.id) {
+            const img = $('img')
+            img.src = '/feiyu-life/postcard?id=' + encodeURIComponent(card.id)
+            img.alt = '她最近寄回的明信片'
+            img.style.cssText = 'width:100%;border-radius:10px;margin:6px 0;border:1px solid var(--dshp-line)'
+            img.loading = 'lazy'
+            box.appendChild(img)
+            box.appendChild($('div', 'dshp-hint', `最近的一张明信片 · 来自${card.scene}`))
+          }
           box.appendChild($('div', 'dshp-hint', `— 已写 ${s.stats.diaryCount} 篇日记 · 今日漫游 ${s.stats.todayRoams}/${s.stats.dailyMax}`))
         })
         .catch(() => {
