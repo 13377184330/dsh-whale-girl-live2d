@@ -4002,45 +4002,163 @@ body.dshp-pet-hidden .dshp-tab{display:flex}
       )
       return
     }
-    // —— 人生页（dsh-feiyu-life）：她的心情/旅程/日记，融在桌宠自己的菜单里 ——
+    // —— 人生页（dsh-feiyu-life）：按天翻阅的生活档案 ——
+    // 心情心电图 + 当天日记全文 + 明信片，全部融在桌宠自己的菜单里（不另开面板）。
     if (id === 'life') {
-      const box = $('div', 'dshp-hint')
-      box.textContent = '……'
-      panes.appendChild(box)
+      const dateStr = (d) => {
+        const p = (n) => String(n).padStart(2, '0')
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+      }
+      const today = dateStr(new Date())
+      let current = today
+      let first = null
+      let last = null
+      let seq = 0 // 快速翻页防竞态：只认最后一次请求
+
+      // 日期导航：◀ 日期 ▶ 今天
+      const nav = $('div', 'dshp-row')
+      const prev = $('button', 'dshp-chip', '◀')
+      prev.title = '前一天'
+      const dateLabel = $('div', 'dshp-hint', current)
+      dateLabel.style.cssText = 'flex:1;text-align:center;font-size:11.5px;opacity:.85;margin:0'
+      const next = $('button', 'dshp-chip', '▶')
+      next.title = '后一天'
+      const todayBtn = $('button', 'dshp-chip', '今天')
+      todayBtn.title = '回到今天'
+      nav.append(prev, dateLabel, next, todayBtn)
+
+      const statusBox = $('div') // 顶部状态行（常驻，不随翻页重渲染）
+      const body = $('div')     // 档案区：心情曲线 + 当天日记（翻页只重渲染这里）
+      const extraBox = $('div') // 明信片 + 总计
+
+      const renderArchive = () => {
+        const my = ++seq
+        body.textContent = '……'
+        dateLabel.textContent = current
+        prev.disabled = !!(first && current <= first)
+        next.disabled = !!(last && current >= last)
+        todayBtn.disabled = current === today
+        fetch('/feiyu-life/archive?date=' + encodeURIComponent(current))
+          .then((r) => (r.ok ? r.json() : null))
+          .then((a) => {
+            if (my !== seq) return
+            body.textContent = ''
+            if (!a || a.ok !== true) {
+              body.appendChild($('div', 'dshp-hint', '（档案取不到……人生引擎可能没启动）'))
+              return
+            }
+            const samples = a.moodSamples || []
+            const st = a.stats || {}
+            // 心情心电图：SVG 折线，0~100 映射到 36~4
+            if (samples.length >= 2) {
+              const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+              svg.setAttribute('viewBox', '0 0 100 40')
+              svg.setAttribute('preserveAspectRatio', 'none')
+              svg.style.cssText = 'width:100%;height:40px;margin:6px 0 2px;display:block'
+              const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline')
+              poly.setAttribute('points', samples.map((m, i) => {
+                const x = samples.length > 1 ? (i / (samples.length - 1)) * 100 : 0
+                const y = 36 - (clamp(m.value, 0, 100) / 100) * 32
+                return x.toFixed(2) + ',' + y.toFixed(2)
+              }).join(' '))
+              poly.setAttribute('fill', 'none')
+              poly.setAttribute('stroke', 'var(--dshp-accent)')
+              poly.setAttribute('stroke-width', '1.4')
+              poly.setAttribute('stroke-linejoin', 'round')
+              poly.setAttribute('vector-effect', 'non-scaling-stroke')
+              svg.appendChild(poly)
+              body.appendChild(svg)
+              const roams = st.destinations ? Object.values(st.destinations).reduce((x, y) => x + y, 0) : 0
+              body.appendChild($('div', 'dshp-hint', `心情 ${st.moodMin} ~ ${st.moodMax} · 日记 ${st.diaryCount} 篇 · 漫游 ${roams} 次`))
+            } else if (samples.length === 1) {
+              body.appendChild($('div', 'dshp-hint', `心情 ${samples[0].value}（这天刚开始采样）`))
+            } else {
+              body.appendChild($('div', 'dshp-hint', '这天还没有心情记录'))
+            }
+            // 当天日记全文
+            const diary = a.diary || []
+            if (diary.length) {
+              for (const e of diary) {
+                const t = new Date(e.at)
+                const hm = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')
+                const item = $('div')
+                item.style.cssText = 'margin-top:8px;padding:2px 0 4px 8px;border-left:2px solid var(--dshp-line)'
+                const meta = $('div', 'dshp-hint', `${hm} · ${e.destination}`)
+                meta.style.cssText = 'margin:0 0 3px;opacity:.65;font-size:10px'
+                const txt = $('div', 'dshp-hint', String(e.text || '').trim())
+                txt.style.cssText = 'opacity:.9;font-size:10.5px;white-space:pre-wrap;line-height:1.55;margin:0'
+                item.append(meta, txt)
+                body.appendChild(item)
+              }
+            } else {
+              body.appendChild($('div', 'dshp-hint', '这天没有写日记。她大概在窝里睡觉，或者你不在。'))
+            }
+          })
+          .catch(() => {
+            if (my !== seq) return
+            body.textContent = ''
+            body.appendChild($('div', 'dshp-hint', '（档案暂时取不到……人生引擎可能没启动）'))
+          })
+      }
+
+      prev.addEventListener('click', () => {
+        const d = new Date(current + 'T12:00:00')
+        d.setDate(d.getDate() - 1)
+        current = dateStr(d)
+        renderArchive()
+      })
+      next.addEventListener('click', () => {
+        const d = new Date(current + 'T12:00:00')
+        d.setDate(d.getDate() + 1)
+        current = dateStr(d)
+        renderArchive()
+      })
+      todayBtn.addEventListener('click', () => {
+        current = today
+        renderArchive()
+      })
+
+      panes.append(nav, statusBox, body, extraBox)
+
+      // 状态行（心情三件套 + 正在做什么）
       fetch('/feiyu-life/state')
         .then((r) => (r.ok ? r.json() : null))
         .then((s) => {
-          box.textContent = ''
+          statusBox.textContent = ''
           if (!s) {
-            box.textContent = '（人生引擎未安装：dsh plugin add npm:dsh-feiyu-life 后，这里会有她的人生）'
+            body.appendChild($('div', 'dshp-hint', '（人生引擎未安装：dsh plugin add npm:dsh-feiyu-life 后，这里会有她的人生）'))
             return
           }
           const mood = s.mood || {}
           const doing = s.sleeping ? '睡着了 zzZ' : (s.doing === 'roaming' ? '出门旅行中' : '在窝里待着')
-          box.appendChild($('div', 'dshp-hint dshp-now', `心情：${mood.word || '还行'}（${mood.value}）· ${doing}`))
-          const trips = (s.journeys || []).slice(0, 3)
-          if (trips.length) {
-            for (const j of trips) {
-              box.appendChild($('div', 'dshp-hint', `${j.at} · ${j.destination}  「${j.sight}」`))
-            }
-          } else {
-            box.appendChild($('div', 'dshp-hint', '还没有旅程。她大概在窝里睡觉。'))
-          }
+          statusBox.appendChild($('div', 'dshp-hint dshp-now', `心情：${mood.word || '还行'}（${mood.value}）· ${doing}`))
+          // 最近的一张明信片
           const card = (s.postcards || [])[0]
           if (card && card.id) {
             const img = $('img')
             img.src = '/feiyu-life/postcard?id=' + encodeURIComponent(card.id)
             img.alt = '她最近寄回的明信片'
-            img.style.cssText = 'width:100%;border-radius:10px;margin:6px 0;border:1px solid var(--dshp-line)'
+            img.style.cssText = 'width:100%;border-radius:10px;margin:8px 0 4px;border:1px solid var(--dshp-line)'
             img.loading = 'lazy'
-            box.appendChild(img)
-            box.appendChild($('div', 'dshp-hint', `最近的一张明信片 · 来自${card.scene}`))
+            extraBox.appendChild(img)
+            extraBox.appendChild($('div', 'dshp-hint', `最近的一张明信片 · 来自${card.scene}`))
           }
-          box.appendChild($('div', 'dshp-hint', `— 已写 ${s.stats.diaryCount} 篇日记 · 今日漫游 ${s.stats.todayRoams}/${s.stats.dailyMax}`))
+          extraBox.appendChild($('div', 'dshp-hint', `— 已写 ${s.stats.diaryCount} 篇日记 · 今日漫游 ${s.stats.todayRoams}/${s.stats.dailyMax}`))
         })
-        .catch(() => {
-          box.textContent = '（她的人生暂时取不到……人生引擎可能没启动）'
+        .catch(() => {})
+
+      // 先拿日期范围（首尾日期用于禁用越界翻页），再渲染默认的今天
+      fetch('/feiyu-life/days')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d) {
+            first = d.first
+            last = d.last
+          }
+          renderArchive()
         })
+        .catch(() => renderArchive())
+
       return
     }
     if (id === 'decor' || id === 'scene') {
